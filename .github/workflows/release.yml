@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: bun-darwin-arm64
+            artifact: mcp-msads-darwin-arm64
+          - os: macos-latest
+            target: bun-darwin-x64
+            artifact: mcp-msads-darwin-x64
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            artifact: mcp-msads-linux-x64
+          - os: windows-latest
+            target: bun-windows-x64
+            artifact: mcp-msads-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Synchronize release metadata from tag
+        run: bun run version:sync "${GITHUB_REF_NAME#v}"
+        shell: bash
+
+      - name: Build binary
+        run: bun build src/index.ts --compile --target=${{ matrix.target }} --outfile=${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 24 ships an npm CLI with trusted-publishing OIDC support.
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - run: bun install --frozen-lockfile
+
+      - name: Synchronize release metadata from tag
+        run: bun run version:sync "${GITHUB_REF_NAME#v}"
+        shell: bash
+
+      - run: bun run scan:secrets
+      - run: bun run test
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run build:npm
+      - run: bun --no-env-file scripts/verify-package.ts --output-dir release-package
+
+      - name: Publish the verified npm tarball with provenance
+        run: npm publish release-package/*.tgz --access public --provenance
+
+  github-release:
+    needs: [build, publish-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*

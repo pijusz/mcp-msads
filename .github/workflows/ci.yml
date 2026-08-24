@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker://rhysd/actionlint:1.7.7
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+      - run: bun run scan:secrets
+      # The launcher enumerates only top-level unit/protocol tests, clears Ads
+      # credentials, denies network, and verifies its sentinel token is unchanged.
+      - run: bun run test
+      - run: bun run typecheck
+      - run: bun run lint
+
+      # Build and inspect a real npm tarball, then complete an MCP handshake
+      # through its declared bin from an unrelated, credential/network-denied directory.
+      - run: bun run build:npm
+      - run: bun run verify:package
