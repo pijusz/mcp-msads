@@ -21,7 +21,7 @@ src/
 │   ├── accounts.ts            # Customer Management + account/customer resolution
 │   ├── campaigns.ts           # Campaign Management CRUD
 │   ├── reporting.ts           # submit → poll → download → unzip → parse
-│   ├── report-types.ts        # Registry of 29 report types and their scope kinds
+│   ├── report-types.ts        # Registry of 28 report types and their scope kinds
 │   ├── ad-insight.ts          # Keyword planning
 │   ├── bulk.ts                # Whole-account export + delta sync
 │   ├── billing.ts             # Customer Billing

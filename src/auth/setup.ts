@@ -34,7 +34,22 @@ interface SetupArgs {
   port: number;
   out?: string;
   allowInRepo: boolean;
+  help?: boolean;
 }
+
+export const SETUP_USAGE = `
+  Usage: mcp-msads setup [--port <n>] [--out <path>] [--allow-in-repo]
+
+  Opens a browser for one-time OAuth consent and writes a mode-0600
+  refresh-token file. Reads MSADS_CLIENT_ID, MSADS_CLIENT_SECRET,
+  MSADS_ENVIRONMENT and MSADS_IDENTITY_PROVIDER from the environment.
+
+    --port <n>        Loopback callback port (default ${DEFAULT_PORT}).
+    --out <path>      Token file path (default: MSADS_TOKEN_FILE, else the
+                      platform config directory).
+    --allow-in-repo   Permit --out inside a Git checkout.
+    -h, --help        Show this help without starting authorization.
+`;
 
 export function defaultTokenPath(
   platform = process.platform,
@@ -298,12 +313,21 @@ export function parseSetupArgs(argv: string[]): SetupArgs {
   let allowInRepo = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === "--help" || arg === "-h") {
+      return { port, allowInRepo, help: true };
+    }
     if (arg === "--port" && argv[i + 1]) {
       port = Number(argv[++i]);
     } else if (arg === "--out" && argv[i + 1]) {
       out = argv[++i];
     } else if (arg === "--allow-in-repo") {
       allowInRepo = true;
+    } else {
+      // Unknown flags (or a flag missing its value) used to be ignored, which
+      // meant a typo or `setup --help` silently launched a real authorization.
+      throw new MsAdsAuthError(
+        `Unknown or incomplete setup argument: ${arg}\n${SETUP_USAGE}`,
+      );
     }
   }
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
@@ -314,6 +338,10 @@ export function parseSetupArgs(argv: string[]): SetupArgs {
 
 export async function runSetup(argv: string[] = []): Promise<void> {
   const args = parseSetupArgs(argv);
+  if (args.help) {
+    console.log(SETUP_USAGE);
+    return;
+  }
   const { port } = args;
   const outPath = prepareSetupOutput(args);
   const env = loadEnv();

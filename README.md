@@ -60,7 +60,12 @@ register the exact `http://127.0.0.1:<port>/callback` URI that setup prints.
 
 ```bash
 MSADS_CLIENT_ID=... MSADS_CLIENT_SECRET=... bun run setup
+# or, without a checkout:
+MSADS_CLIENT_ID=... MSADS_CLIENT_SECRET=... npx -y mcp-msads setup
 ```
+
+`mcp-msads setup --help` lists the flags (`--port`, `--out`, `--allow-in-repo`)
+without starting authorization; unknown flags are rejected.
 
 This opens a browser, catches the IPv4-loopback callback, and writes a mode-0600
 refresh-token file under the platform config directory (`mcp-msads/msads-token.json`).

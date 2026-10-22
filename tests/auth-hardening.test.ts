@@ -224,6 +224,14 @@ describe("refresh locking", () => {
 });
 
 describe("setup safety", () => {
+  test("--help short-circuits and unknown flags never start authorization", () => {
+    expect(parseSetupArgs(["--help"]).help).toBe(true);
+    expect(parseSetupArgs(["--port", "4000", "-h"]).help).toBe(true);
+    expect(parseSetupArgs(["--port", "4000"]).help).toBeUndefined();
+    expect(() => parseSetupArgs(["--prot", "4000"])).toThrow(/Unknown or incomplete/);
+    expect(() => parseSetupArgs(["--out"])).toThrow(/Unknown or incomplete/);
+  });
+
   test("validates tenants and launches URLs without a shell", () => {
     setTestEnv({ MSADS_TENANT: "common$(touch injected)" });
     resetEnvForTesting();

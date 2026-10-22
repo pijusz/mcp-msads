@@ -20,7 +20,12 @@ if (process.argv[2] === "setup") {
   // ahead of zod's class definitions and makes the published bundle throw
   // "Class2 is not a constructor" on startup. setup.ts pulls only Node
   // builtins, so deferring it bought nothing anyway.
-  await runSetup(process.argv.slice(3));
+  try {
+    await runSetup(process.argv.slice(3));
+  } catch (err) {
+    console.error(`\n  Setup failed: ${(err as Error).message}\n`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -41,7 +46,7 @@ async function runStartupPreflight(): Promise<void> {
     const env = loadEnv();
     if (!env.MSADS_REFRESH_TOKEN && !env.MSADS_TOKEN_FILE) {
       throw new Error(
-        "No credentials configured. Run `mcp-msads setup` to authorize, then set MSADS_REFRESH_TOKEN.",
+        "No credentials configured. Run `mcp-msads setup` to authorize, then set MSADS_TOKEN_FILE (preferred, persists rotations) or MSADS_REFRESH_TOKEN.",
       );
     }
     if (shouldValidateAtStartup()) {
