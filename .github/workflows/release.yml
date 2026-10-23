@@ -91,7 +91,7 @@ jobs:
       # publishing can't do) is already on npm; re-publishing would fail with
       # E403 and block the GitHub release, so skip it.
       - name: Publish the verified npm tarball with provenance
-        run: npm view "mcp-msads@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1 && echo "Already on npm; skipping publish." || npm publish release-package/*.tgz --access public --provenance
+        run: if npm view "mcp-msads@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then echo "Already on npm; skipping publish."; else npm publish release-package/*.tgz --access public --provenance; fi
 
   github-release:
     needs: [build, publish-npm]

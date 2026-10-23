@@ -90,7 +90,7 @@ describe("release hygiene", () => {
       "bun run lint",
       "bun run build:npm",
       "bun --no-env-file scripts/verify-package.ts --output-dir release-package",
-      `npm view "mcp-msads@${"$"}{GITHUB_REF_NAME#v}" version >/dev/null 2>&1 && echo "Already on npm; skipping publish." || npm publish release-package/*.tgz --access public --provenance`,
+      `if npm view "mcp-msads@${"$"}{GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then echo "Already on npm; skipping publish."; else npm publish release-package/*.tgz --access public --provenance; fi`,
     ]);
 
     const githubRelease = jobBlock(workflow, "github-release");
