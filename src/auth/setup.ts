@@ -3,7 +3,17 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  posix,
+  relative,
+  resolve,
+  sep,
+  win32,
+} from "node:path";
 import {
   authorizeUrlBase,
   exchangeCode,
@@ -56,13 +66,15 @@ export function defaultTokenPath(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const home = env.HOME || env.USERPROFILE || homedir();
+  // Join with the target platform's separator, not the host's.
+  const { join: joinFor } = platform === "win32" ? win32 : posix;
   const configRoot =
     platform === "win32"
-      ? env.APPDATA || join(home, "AppData", "Roaming")
+      ? env.APPDATA || joinFor(home, "AppData", "Roaming")
       : platform === "darwin"
-        ? join(home, "Library", "Application Support")
-        : env.XDG_CONFIG_HOME || join(home, ".config");
-  return join(configRoot, "mcp-msads", "msads-token.json");
+        ? joinFor(home, "Library", "Application Support")
+        : env.XDG_CONFIG_HOME || joinFor(home, ".config");
+  return joinFor(configRoot, "mcp-msads", "msads-token.json");
 }
 
 /**

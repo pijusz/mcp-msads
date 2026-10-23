@@ -94,7 +94,8 @@ export function writeSecureFile(path: string, contents: string | Buffer): void {
 
     // The temporary file data was synced before rename. Sync the renamed file
     // after chmod, then the directory entry, before discarding recovery bytes.
-    const fd = openSync(path, constants.O_RDONLY);
+    // Windows refuses fsync on a read-only handle (EPERM), so open read-write.
+    const fd = openSync(path, constants.O_RDWR);
     try {
       fsyncSync(fd);
     } finally {
