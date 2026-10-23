@@ -87,8 +87,18 @@ jobs:
       - run: bun run build:npm
       - run: bun --no-env-file scripts/verify-package.ts --output-dir release-package
 
+      # A version published locally (the first release, which trusted
+      # publishing can't do) is already on npm; re-publishing would fail with
+      # E403 and block the GitHub release. Skip it instead.
       - name: Publish the verified npm tarball with provenance
-        run: npm publish release-package/*.tgz --access public --provenance
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "mcp-msads@$VERSION" version >/dev/null 2>&1; then
+            echo "mcp-msads@$VERSION is already on npm; skipping publish." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          npm publish release-package/*.tgz --access public --provenance
 
   github-release:
     needs: [build, publish-npm]
