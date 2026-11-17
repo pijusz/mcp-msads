@@ -63,11 +63,36 @@ function stripAccents(value: string): string {
 }
 
 /**
+ * Strip a national trunk prefix before the country code is prepended.
+ *
+ * Most plans dial a leading `0` domestically (UK 07700 900123 → +44 7700
+ * 900123). Italy keeps its leading 0 in E.164. NANP (+1) uses `1` and Russia/
+ * Kazakhstan (+7) use `8`, and only on a full-length national number.
+ */
+function stripTrunkPrefix(national: string, cc: string): string {
+  if (cc === "1") {
+    return national.length === 11 && national.startsWith("1")
+      ? national.slice(1)
+      : national;
+  }
+  if (cc === "7" && national.length === 11 && national.startsWith("8")) {
+    return national.slice(1);
+  }
+  if (cc === "39") return national;
+  return national.startsWith("0") ? national.slice(1) : national;
+}
+
+/**
  * Normalize a phone number to E.164: digits only, with a leading `+`.
  *
- * A country code is required. A bare national number cannot be matched, and
- * guessing one would silently attribute users to the wrong country, so a
- * number without one is rejected rather than assumed.
+ * A country code is present only when the number starts with `+` or the
+ * international `00` prefix. Anything else is a national number: its trunk
+ * prefix is stripped and `defaultCountryCode` prepended. Leading digits that
+ * merely look like the country code are NOT treated as one (Indian national
+ * 9123456789 with code 91 is +919123456789, not +9123456789).
+ *
+ * A bare national number without a default cannot be matched, and guessing a
+ * code would silently attribute users to the wrong country, so it is rejected.
  */
 export function normalizePhone(phone: string, defaultCountryCode?: string): string {
   const trimmed = phone.trim();
@@ -78,19 +103,21 @@ export function normalizePhone(phone: string, defaultCountryCode?: string): stri
     throw new Error("Phone normalization failed: the value contains no digits.");
   }
 
-  if (!hadPlus) {
-    if (!defaultCountryCode) {
-      throw new Error(
-        "Phone normalization failed: the value has no country code. Microsoft requires E.164 format. " +
-          "Supply default_country_code, or include the code in the number.",
-      );
-    }
-    const cc = defaultCountryCode.replace(/\D/g, "");
-    // A number may already carry the country code without a "+".
-    digits = digits.startsWith(cc) ? digits : `${cc}${digits}`;
-  }
+  if (hadPlus) return `+${digits}`;
+  if (digits.startsWith("00") && digits.length > 2) return `+${digits.slice(2)}`;
 
-  return `+${digits}`;
+  if (!defaultCountryCode) {
+    throw new Error(
+      "Phone normalization failed: the value has no country code. Microsoft requires E.164 format. " +
+        "Supply default_country_code, or include the code in the number with a leading + or 00.",
+    );
+  }
+  const cc = defaultCountryCode.replace(/\D/g, "");
+  if (!cc) {
+    throw new Error("Phone normalization failed: default_country_code has no digits.");
+  }
+  digits = stripTrunkPrefix(digits, cc);
+  return `+${cc}${digits}`;
 }
 
 export interface HashedIdentifier {

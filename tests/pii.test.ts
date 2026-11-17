@@ -56,8 +56,26 @@ describe("normalizePhone", () => {
     expect(normalizePhone("425-555-1212", "1")).toBe("+14255551212");
   });
 
-  test("does not double the country code when it is already there", () => {
+  test("strips the NANP trunk 1 from a full-length national number", () => {
     expect(normalizePhone("14255551212", "1")).toBe("+14255551212");
+  });
+
+  test("does not mistake national digits for the country code", () => {
+    // Indian mobile 91234 56789 starts with "91" but is a national number.
+    expect(normalizePhone("9123456789", "91")).toBe("+919123456789");
+    expect(normalizePhone("4412345678", "44")).toBe("+444412345678");
+  });
+
+  test("strips a leading trunk 0 before prepending the country code", () => {
+    expect(normalizePhone("07700 900123", "44")).toBe("+447700900123");
+    expect(normalizePhone("030 1234567", "49")).toBe("+49301234567");
+    // Italy keeps its leading 0 in E.164.
+    expect(normalizePhone("06 1234 5678", "39")).toBe("+390612345678");
+  });
+
+  test("treats a 00 international prefix as carrying the country code", () => {
+    expect(normalizePhone("0044 7700 900123")).toBe("+447700900123");
+    expect(normalizePhone("0044 7700 900123", "1")).toBe("+447700900123");
   });
 
   test("refuses to guess a missing country code without echoing the identifier", () => {
