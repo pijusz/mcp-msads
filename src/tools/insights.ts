@@ -225,8 +225,14 @@ export function registerInsightTools(server: McpServer): void {
         .enum(["Hourly", "Daily", "Weekly", "Monthly"])
         .optional()
         .describe("Default Monthly."),
-      language: z.string().optional(),
-      network: z.string().optional(),
+      language: z.string().optional().describe('Full name, default "English".'),
+      devices: z
+        .array(z.enum(ai.SEARCH_COUNT_DEVICES))
+        .min(1)
+        .optional()
+        .describe(
+          "Device classes to count. Default Computers, Smartphones and Tablets (the API's own default is Computers only).",
+        ),
       limit: COLLECTION_LIMIT,
     },
     handler: async (args) => {
@@ -241,7 +247,7 @@ export function registerInsightTools(server: McpServer): void {
             ? { timePeriodRollup: String(args.time_period_rollup) }
             : {}),
           ...(args.language ? { language: String(args.language) } : {}),
-          ...(args.network ? { network: String(args.network) } : {}),
+          ...(Array.isArray(args.devices) ? { devices: args.devices.map(String) } : {}),
         },
       );
       return collectionEnvelope("search_counts", counts, {

@@ -712,7 +712,24 @@ describe("dedicated service request contracts", () => {
     mock.queue("KeywordTrafficEstimates/Query", { json: { CampaignEstimates: [] } });
     mock.queue("KeywordSuggestions/QueryByUrl", { json: { Keywords: [] } });
     mock.queue("HistoricalSearchCount/Query", {
-      json: { KeywordHistoricalSearchCounts: [] },
+      json: {
+        KeywordSearchCounts: [
+          {
+            Keyword: "shoes",
+            SearchCountsByAttributes: [
+              {
+                Device: "Computers",
+                HistoricalSearchCounts: [
+                  {
+                    DayMonthAndYear: { Day: 1, Month: 1, Year: 2026 },
+                    SearchCount: "1200",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
     });
     mock.queue("BidLandscape/QueryByKeywordIds", { json: { BidLandscape: [] } });
     mock.queue("AuctionInsightData/Query", { json: { AuctionInsightEntries: [] } });
@@ -728,11 +745,13 @@ describe("dedicated service request contracts", () => {
     await suggestKeywordsForUrl(IDS, "https://example.com", 75, "English");
     const start = { Day: 1, Month: 1, Year: 2026 };
     const end = { Day: 1, Month: 8, Year: 2026 };
-    await getHistoricalSearchCount(IDS, ["shoes"], {
+    const searchCounts = await getHistoricalSearchCount(IDS, ["shoes"], {
       publisherCountries: ["US"],
       startDate: start,
       endDate: end,
     });
+    expect(searchCounts).toHaveLength(1);
+    expect(searchCounts[0]).toMatchObject({ Keyword: "shoes" });
     await getBidLandscape(IDS, ["9000000000000001"], false);
     await getAuctionInsight(IDS, "Campaign", ["8000000000000001"], start, end);
 
@@ -783,6 +802,7 @@ describe("dedicated service request contracts", () => {
       PublisherCountries: ["US"],
       StartDate: start,
       EndDate: end,
+      Devices: ["Computers", "Smartphones", "Tablets"],
     });
     expect(callEnding(paths[3]!).body).toEqual({
       KeywordIds: ["9000000000000001"],

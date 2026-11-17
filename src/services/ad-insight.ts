@@ -305,6 +305,25 @@ function defaultSearchCountRange(): {
   return { start: asDate(start), end: asDate(now) };
 }
 
+/** `Devices` values accepted by GetHistoricalSearchCount. */
+export const SEARCH_COUNT_DEVICES = [
+  "Computers",
+  "NonSmartphones",
+  "Smartphones",
+  "Tablets",
+] as const;
+
+/**
+ * The API's own default is Computers only, which silently omits mobile
+ * volume; ask for the three device classes that carry real traffic.
+ */
+const DEFAULT_SEARCH_COUNT_DEVICES = ["Computers", "Smartphones", "Tablets"];
+
+/**
+ * `GetHistoricalSearchCount`. The response key is `KeywordSearchCounts`
+ * (each `{ Keyword, SearchCountsByAttributes: [{ Device, HistoricalSearchCounts }] }`),
+ * and the request has no Network element.
+ */
 export async function getHistoricalSearchCount(
   ids: AccountIds,
   keywords: string[],
@@ -312,7 +331,7 @@ export async function getHistoricalSearchCount(
     /** ISO country codes, e.g. ["US"] — not the numeric location ids. */
     publisherCountries?: string[];
     language?: string;
-    network?: string;
+    devices?: string[];
     startDate?: { Day: number; Month: number; Year: number };
     endDate?: { Day: number; Month: number; Year: number };
     timePeriodRollup?: string;
@@ -324,7 +343,7 @@ export async function getHistoricalSearchCount(
     });
   }
   const res = await msadsFetch<{
-    KeywordHistoricalSearchCounts?: Record<string, unknown>[];
+    KeywordSearchCounts?: Record<string, unknown>[] | null;
   }>("AdInsight", "HistoricalSearchCount/Query", {
     body: {
       Keywords: keywords,
@@ -332,7 +351,6 @@ export async function getHistoricalSearchCount(
       // Language is mandatory (error 3412 InvalidLanguage without it) and wants
       // the full name — "en" is rejected where "English" is accepted.
       Language: input.language ?? "English",
-      ...(input.network ? { Network: input.network } : {}),
       ...(input.publisherCountries?.length
         ? { PublisherCountries: input.publisherCountries }
         : {}),
@@ -341,11 +359,12 @@ export async function getHistoricalSearchCount(
       // almost always wants.
       StartDate: input.startDate ?? defaultSearchCountRange().start,
       EndDate: input.endDate ?? defaultSearchCountRange().end,
+      Devices: input.devices?.length ? input.devices : DEFAULT_SEARCH_COUNT_DEVICES,
     },
     ...ids,
     retry: "safe",
   });
-  return res.KeywordHistoricalSearchCounts ?? [];
+  return Array.isArray(res.KeywordSearchCounts) ? res.KeywordSearchCounts : [];
 }
 
 /** `GetBidLandscapeByKeywordIds` — estimated stats at a range of bids. */
