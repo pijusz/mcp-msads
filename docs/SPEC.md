@@ -122,6 +122,9 @@ change took effect:
 
 - `TargetCpaBiddingScheme` / `TargetRoasBiddingScheme` are converted to
   `MaxConversions` / `MaxConversionValue` behind your back (since 2025-08-04).
+  Refused in both spellings (`TargetCpa` too). Accepted schemes may be named by
+  class or short form and are sent as Microsoft's REST SDK serializes them.
+- Negative keywords with `Broad` match are refused: only Exact and Phrase exist.
 - Bid strategies below campaign level are ignored (since April 2021).
 - Omitting `TimePeriod` downgrades your aggregation to `Summary` without saying so.
 - `Conversions` and `AveragePosition` return 0 rather than erroring.
@@ -237,7 +240,7 @@ found, because most of it was invisible from the inside.
 
 ### Bugs that unit tests did not catch
 
-- **`run_report` with `Summary` aggregation failed for 26 of 29 report types.**
+- **`run_report` with `Summary` aggregation failed for 26 of the then-29 report types.**
   The guard against "TimePeriod + Summary" (API error 2034) ran against the
   *defaulted* column list, and most defaults lead with TimePeriod. Worse, this
   server's own prompts instruct exactly that call. The existing test only
@@ -271,7 +274,7 @@ association instead", pointing at a capability that did not exist.
 The instinct to trim 74 tools was aimed at the wrong target. Measured against
 the siblings, this server is not more granular per surface — `mcp-gads` has 36
 tools and *no write surface at all*; `mcp-meta-ads` has 38 write tools to our
-39. And it was already consolidated where it counts: `run_report` covers 29
+39. And it was already consolidated where it counts: `run_report` covers 28
 report types in one tool where `mcp-gads` spends ~20 tools on one-report-each.
 
 Where the tokens actually were:

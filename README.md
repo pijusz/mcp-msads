@@ -216,10 +216,10 @@ bounded, and bulk uploads accept at most 100,000 records.
 
 | Tool | Purpose |
 |---|---|
-| `list_targeting` | Read targeting criterions on a campaign or ad group — age, gender, device, location, ad schedule, audiences, or LinkedIn profile targeting. |
+| `list_targeting` | Read targeting criterions on a campaign or ad group — age, gender, device, location, ad schedule, audiences, or LinkedIn profile targeting. Requires `parent_id` (the owning campaign or ad group). |
 | `add_targeting` | Add targeting criterions to a campaign or ad group. |
 | `update_targeting` | Update targeting criterions — most commonly to change a bid multiplier. |
-| `delete_targeting` ⚠️ | Remove targeting criterions. |
+| `delete_targeting` ⚠️ | Remove targeting criterions from the campaign or ad group named by `parent_id`. |
 | `search_linkedin_companies` | Search LinkedIn company names and return their ProfileIds, for use with ProfileCriterion targeting. |
 | `get_targeting_id_file` | Get a temporary download URL for Microsoft's targeting id reference files. |
 
@@ -247,7 +247,7 @@ bounded, and bulk uploads accept at most 100,000 records.
 | `associate_ad_extensions` | Attach ad extensions to campaigns or ad groups, which is what makes them serve. |
 | `remove_ad_extension_associations` ⚠️ | Detach ad extensions from campaigns or ad groups WITHOUT deleting them. |
 | `list_negative_keywords` | List negative keywords set directly on campaigns or ad groups. |
-| `add_negative_keywords` | Add negative keywords to one campaign or ad group, stopping ads from showing on those searches. |
+| `add_negative_keywords` | Add negative keywords to one campaign or ad group, stopping ads from showing on those searches. Match types are Exact and Phrase only. |
 | `delete_negative_keywords` ⚠️ | Remove negative keywords from a campaign or ad group. |
 | `list_labels` | List labels in the account. |
 | `create_labels` | Create labels. |
@@ -260,20 +260,20 @@ bounded, and bulk uploads accept at most 100,000 records.
 | `list_uet_tags` | List Universal Event Tracking tags on the account, including the tracking script for each. |
 | `create_uet_tags` | Create UET tags. |
 | `list_conversion_goals` | List conversion goals with their type, attribution model, conversion window, revenue settings, and tracking status. |
-| `create_conversion_goals` | Create conversion goals. |
+| `create_conversion_goals` | Create conversion goals. Each needs a `GoalCategory`; `Type` is `Url`, `Event`, … (class names such as `UrlGoal` are accepted). |
 | `update_conversion_goals` | Update conversion goals — rename them, change the conversion window, revenue value, or count type. |
 | `upload_offline_conversions` | Upload conversions that happened away from the website — a phone sale, an in-store purchase, a CRM-qualified lead. |
 | `adjust_offline_conversions` ⚠️ | Restate or retract a conversion already uploaded — a refund, a cancelled order, or a corrected value. |
-| `send_conversion_events` | Send conversion events server-side through the Microsoft Conversions API; the per-tag credential is fetched internally and never returned. |
+| `send_conversion_events` | Send conversion events (up to 90 days old) server-side through the Microsoft Conversions API; the per-tag credential is fetched internally and never returned. |
 
 ### Keyword planning (Ad Insight)
 
 | Tool | Purpose |
 |---|---|
-| `get_keyword_ideas` | Microsoft Advertising's keyword planner: search volume, competition, and suggested bids for keyword ideas. |
+| `get_keyword_ideas` | Microsoft Advertising's keyword planner: search volume, competition, and suggested bids for keyword ideas. Filter competition with `competition_levels` (Low / Medium / High). |
 | `get_keyword_traffic_estimates` | Estimate clicks, impressions, average CPC, and total cost for a set of keywords at a given bid — before spending anything on them. |
 | `suggest_keywords_for_url` | Suggest keywords by reading the content of a web page. |
-| `get_historical_search_count` | Historical search volume for specific terms over time, independent of any campaign. |
+| `get_historical_search_count` | Historical search volume for specific terms over time, independent of any campaign, by device (default Computers, Smartphones, Tablets). |
 | `get_bid_landscape` | For existing keywords, show estimated clicks, impressions, and cost across a range of bids — the data behind 'what would happen if I bid more'. |
 | `get_auction_insights` | Competitive auction data: who else shows up in the same auctions, their impression share, overlap rate, and position-above rate. |
 
@@ -354,6 +354,26 @@ imports with deletion mirroring are marked destructive in their MCP annotations.
 
 **Created entities default to Paused.** Pass `Status: "Active"` explicitly to
 start delivery.
+
+**Bid strategy names.** `BiddingScheme.Type` accepts the class name
+(`MaxConversionsBiddingScheme`) or the short form (`MaxConversions`) and is sent
+the way Microsoft's REST SDK sends it. `TargetCpa` / `TargetRoas` are refused in
+either spelling: the API silently converts them.
+
+**Reports add what they require.** Each report type's documented required
+columns are added if you leave them out (with a warning), and report types that
+have no aggregation setting (`budget_summary`, `campaign_change_history`,
+`negative_keyword_conflicts`) ignore an `aggregation` argument. When narrowing
+a report to ad groups or asset groups, pass their parent campaign as
+`campaign_id`.
+
+**Bulk entity names are per type.** There is no umbrella `AdExtensions` or
+`ConversionGoals` download entity — request `SitelinkAdExtensions`,
+`CampaignSitelinkAdExtensions`, `UrlGoal`, and so on.
+
+**Phone numbers.** A country code is recognized only after `+` or `00`.
+Anything else is a national number: its trunk prefix (`0`; `1` for +1; `8` for
++7) is dropped and `default_country_code` prepended.
 
 **Reports may be incomplete.** Clicks settle in ~2h and conversions in ~3h;
 invalid-traffic adjustments can move historical numbers a week later. When

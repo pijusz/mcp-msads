@@ -154,7 +154,9 @@ former and accept either response shape.
 The bulk *upload* itself is a `multipart/form-data` POST to the URL that
 `GetBulkUploadUrl` returns. That endpoint does **not** use `Authorization:
 Bearer` — it takes the raw token in an `AuthenticationToken` header, the
-SOAP-era convention kept for this one call. Each URL is single-use.
+SOAP-era convention kept for this one call. Each URL is single-use. Its host
+is not guaranteed to be `bulk.api.*`, so any HTTPS host under
+`bingads.microsoft.com` is accepted (checked on every redirect).
 
 ## Ad Insight
 
@@ -190,3 +192,27 @@ path that does not follow from the operation name.
   template and remains an array here.
 - `ForwardCompatibilityMap` entries use lowercase `key` / `value`, unlike every
   other field in the API.
+
+## Body shapes worth knowing
+
+Checked against the REST reference pages and Microsoft's generated REST SDK
+(`BingAds-Python-SDK/openapi_client`):
+
+- Criterion reads and deletes (`*Criterions/QueryByIds`, `DELETE *Criterions`)
+  require the parent `CampaignId` / `AdGroupId`; with null ids a read returns
+  every criterion of that type under the parent.
+- `AdExtensionIds/QueryByAccountId` answers `{ "AdExtensionIds": [...] }`.
+- `HistoricalSearchCount/Query` answers `{ "KeywordSearchCounts": [...] }` and
+  takes `Devices`, not `Network`.
+- `CompetitionSearchParameter` carries `CompetitionLevels` (Low/Medium/High).
+- Conversion goal `Type` is the ConversionGoalType value (`Url`, `Event`, …);
+  `GoalCategory` is required on Add.
+- `BiddingScheme.Type` is sent as the REST SDK serializes it: `MaxConversions`,
+  `ManualCpc`, `EnhancedCpc`, `MaxClicks`, … but `MaxConversionValueBiddingScheme`,
+  `TargetImpressionShareBiddingScheme`, … keep the class name.
+- Entity negative keywords carry `"Type": "NegativeKeyword"`; match types are
+  Exact and Phrase only.
+- Bulk `CampaignScope` is `{ CampaignId, ParentAccountId }`; `DownloadEntities`
+  has no umbrella `AdExtensions` / `ConversionGoals` value.
+- Report `AdGroupReportScope` / `AssetGroupReportScope` carry `CampaignId`.
+- `CustomerListUserData/Apply` answers `PartialErrors`.

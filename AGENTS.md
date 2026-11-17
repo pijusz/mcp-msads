@@ -15,22 +15,33 @@ src/
 │   ├── secure-file.ts         # Atomic owner-only token files + process lock
 │   └── setup.ts               # One-time browser consent (auth code + PKCE)
 ├── config/
-│   └── env.ts                 # Zod-validated env + .env loader
+│   └── env.ts                 # Zod-validated env + MSADS_ENV_FILE loader
+├── prompts/
+│   └── index.ts               # MCP prompts: multi-step workflows over the tools
 ├── services/
 │   ├── msads-api.ts           # The only HTTP path: retries, 109 refresh, faults
 │   ├── accounts.ts            # Customer Management + account/customer resolution
-│   ├── campaigns.ts           # Campaign Management CRUD
+│   ├── campaigns.ts           # Campaigns, ad groups, ads, keywords, budgets, labels
+│   ├── targeting.ts           # Campaign / ad group criterions, LinkedIn profiles
+│   ├── extensions.ts          # Ad extensions + associations, negative keywords
+│   ├── audiences.ts           # Audiences + customer-list uploads
+│   ├── conversions.ts         # UET tags, conversion goals, offline conversions
+│   ├── capi.ts                # Conversions API (server-side events)
+│   ├── pii.ts                 # Email / phone normalization + SHA-256
+│   ├── import-jobs.ts         # Google Ads import
 │   ├── reporting.ts           # submit → poll → download → unzip → parse
 │   ├── report-types.ts        # Registry of 28 report types and their scope kinds
 │   ├── ad-insight.ts          # Keyword planning
-│   ├── bulk.ts                # Whole-account export + delta sync
+│   ├── bulk.ts                # Whole-account export, delta sync, bulk upload
 │   ├── billing.ts             # Customer Billing
 │   ├── guardrails.ts          # Rules the API ignores silently
 │   └── cache.ts               # In-memory, credential-scoped
 ├── tools/
 │   ├── index.ts               # Barrel
-│   ├── accounts.ts  campaigns.ts  reports.ts
-│   ├── insights.ts  bulk.ts       billing.ts
+│   ├── _shared.ts             # WRITE, ACCOUNT_ARGS, ids()
+│   ├── accounts.ts  campaigns.ts  targeting.ts  extensions.ts
+│   ├── audiences.ts conversions.ts import-jobs.ts
+│   ├── reports.ts   insights.ts   bulk.ts       billing.ts
 │   └── raw.ts                 # Escape hatch for unwrapped operations
 └── utils/
     ├── define-read.ts         # Register a read as tool AND resource
@@ -39,6 +50,7 @@ src/
     ├── batch.ts               # Partial-failure reconciliation
     ├── collection.ts          # Shared bounded collection envelope
     ├── errors.ts              # MsAdsError, code table, hints
+    ├── safe-http.ts           # Bounded, SSRF-checked fetch for API-issued URLs
     ├── zip.ts                 # Dependency-free bounded ZIP reader
     ├── csv.ts                 # RFC 4180 + Microsoft report envelope
     ├── tsv.ts                 # Token-efficient tabular output
