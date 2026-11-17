@@ -149,6 +149,11 @@ function readMetadataLine(row: string[]): [string, string] | null {
  * / ExcludeReportFooter flags, so a caller that flips them does not also have
  * to change how it reads the result.
  */
+/** Microsoft's trailing line, e.g. "©2026 Microsoft Corporation. All rights reserved." */
+function isCopyrightFooter(cell: string): boolean {
+  return /microsoft corporation\.?\s*all rights reserved/i.test(cell);
+}
+
 export function parseReportCsv(
   text: string,
   delimiter = ",",
@@ -173,7 +178,10 @@ export function parseReportCsv(
     }
 
     if (isBlank(row)) return;
-    if (row.length === 1 && columns.length > 1) {
+    // The copyright footer is a lone cell. With several columns any lone cell
+    // is the footer; in a one-column report it is recognized by its text, so
+    // it is not counted as a data row.
+    if (row.length === 1 && (columns.length > 1 || isCopyrightFooter(row[0] ?? ""))) {
       footer = row[0]?.trim();
       return;
     }

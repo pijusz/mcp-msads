@@ -81,6 +81,16 @@ describe("parseReportCsv", () => {
     expect(r.footer).toContain("Microsoft Corporation");
   });
 
+  test("does not count the footer as a row in a one-column report", () => {
+    const report = parseReportCsv(
+      `"Report Name: One"\n"Rows: 2"\n\n"Keyword"\n"red"\n"blue"\n\n"©2026 Microsoft Corporation. All rights reserved. "\n`,
+    );
+    expect(report.columns).toEqual(["Keyword"]);
+    expect(report.rows).toEqual([{ Keyword: "red" }, { Keyword: "blue" }]);
+    expect(report.totalRows).toBe(2);
+    expect(report.footer).toContain("Microsoft Corporation");
+  });
+
   test("surfaces the incomplete-data flag rather than burying it", () => {
     expect(parseReportCsv(FULL_REPORT).potentiallyIncomplete).toBe(true);
   });
