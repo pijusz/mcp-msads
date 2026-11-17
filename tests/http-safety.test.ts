@@ -312,4 +312,38 @@ describe("API-returned URL safety", () => {
     expect(calls[0]?.auth).toBe("test-access-token");
     expect(calls.some((call) => call.url.includes("attacker.test"))).toBe(false);
   });
+
+  test("accepts an upload URL on another Microsoft Ads host, refuses look-alikes", async () => {
+    const calls: string[] = [];
+    const uploadFetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+    const ids = { accountId: "42", customerId: "9" };
+    const deps = { fetch: uploadFetch, lookup: publicLookup };
+
+    // GetBulkUploadUrl may hand back a host other than bulk.api.*.
+    await postBulkFile(
+      "https://fileupload.api.bingads.microsoft.com/Api/Upload/abc?Ver=13",
+      ids,
+      Buffer.from("zip"),
+      "upload.zip",
+      deps,
+    );
+    expect(calls).toEqual([
+      "https://fileupload.api.bingads.microsoft.com/Api/Upload/abc?Ver=13",
+    ]);
+
+    for (const url of [
+      "https://bingads.microsoft.com.attacker.test/upload",
+      "https://attacker.test/bingads.microsoft.com",
+      "http://fileupload.api.bingads.microsoft.com/upload",
+    ]) {
+      await expect(
+        postBulkFile(url, ids, Buffer.from("zip"), "upload.zip", deps),
+        url,
+      ).rejects.toThrow(/approved origin|HTTPS/);
+    }
+    expect(calls).toHaveLength(1);
+  });
 });

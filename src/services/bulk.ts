@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { getAccessToken } from "@/auth/oauth";
 import { getEnv, resolveDeveloperToken } from "@/config/env";
 import type { AccountIds } from "@/services/campaigns";
-import { downloadFile, msadsFetch, serviceBaseUrl } from "@/services/msads-api";
+import { downloadFile, msadsFetch } from "@/services/msads-api";
 import { forEachDelimitedRow } from "@/utils/csv";
 import { MsAdsError } from "@/utils/errors";
 import { log } from "@/utils/logger";
@@ -508,6 +508,18 @@ export async function getBulkUploadUrl(
 }
 
 /**
+ * Hosts a GetBulkUploadUrl URL may point at. The URL is not guaranteed to be
+ * on the Bulk service host (upload URLs have historically lived on a separate
+ * file-upload host), so pinning to bulk.api.* would break every upload. Any
+ * HTTPS host under bingads.microsoft.com is accepted — still Microsoft-only,
+ * and checked on every redirect, since the request carries the access token.
+ */
+export function isMicrosoftAdsHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "bingads.microsoft.com" || host.endsWith(".bingads.microsoft.com");
+}
+
+/**
  * POST the zipped bulk file to the upload URL.
  *
  * This endpoint does NOT use `Authorization: Bearer`. It takes the raw access
@@ -550,7 +562,7 @@ export async function postBulkFile(
     {
       timeoutMs: getEnv().MSADS_REQUEST_TIMEOUT_MS,
       maxBytes: MAX_API_RESPONSE_BYTES,
-      allowedOrigin: new URL(serviceBaseUrl("Bulk")).origin,
+      allowedHost: isMicrosoftAdsHost,
       ...dependencies,
     },
   );

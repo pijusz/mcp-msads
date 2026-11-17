@@ -29,6 +29,11 @@ export interface SafeHttpOptions extends SafeHttpDependencies {
   maxBytes: number;
   /** When set, the initial URL and every redirect must keep this exact origin. */
   allowedOrigin?: string;
+  /**
+   * When set, the initial URL and every redirect must have a hostname this
+   * accepts (HTTPS/443 is enforced regardless).
+   */
+  allowedHost?: (hostname: string) => boolean;
 }
 
 export interface SafeHttpResult {
@@ -120,6 +125,7 @@ export async function safeFetchBytes(
         lookup,
         options.allowedOrigin,
         controller.signal,
+        options.allowedHost,
       );
       const fetchImpl = options.fetch ?? testFetch;
       const response = options.request
@@ -268,6 +274,7 @@ async function validateDestination(
   lookup: DnsLookup,
   allowedOrigin: string | undefined,
   signal: AbortSignal,
+  allowedHost?: (hostname: string) => boolean,
 ): Promise<readonly string[]> {
   if (
     url.protocol !== "https:" ||
@@ -280,6 +287,9 @@ async function validateDestination(
     });
   }
   if (allowedOrigin && url.origin !== allowedOrigin) {
+    throw new MsAdsError({ message: "Outbound URL is outside the approved origin." });
+  }
+  if (allowedHost && !allowedHost(url.hostname.toLowerCase())) {
     throw new MsAdsError({ message: "Outbound URL is outside the approved origin." });
   }
 
