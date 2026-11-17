@@ -24,13 +24,13 @@ function runSteps(job: string): string[] {
 }
 
 function expectCredentiallessCheckouts(workflow: string): void {
-  const checkout = /^ {6}- uses: actions\/checkout@v4$/gm;
+  const checkout = /^ {6}- uses: actions\/checkout@v\d+$/gm;
   const matches = [...workflow.matchAll(checkout)];
   expect(matches.length).toBeGreaterThan(0);
   for (const match of matches) {
     const following = workflow.slice(match.index, match.index + 140);
     expect(following).toMatch(
-      /^ {6}- uses: actions\/checkout@v4\n {8}with:\n {10}persist-credentials: false/m,
+      /^ {6}- uses: actions\/checkout@v\d+\n {8}with:\n {10}persist-credentials: false/m,
     );
   }
 }
@@ -58,7 +58,7 @@ describe("release hygiene", () => {
     expectCredentiallessCheckouts(workflow);
 
     const lint = jobBlock(workflow, "workflow-lint");
-    expect(lint).toContain("- uses: docker://rhysd/actionlint:1.7.7");
+    expect(lint).toContain("- uses: docker://rhysd/actionlint:1.7.12");
 
     const commands = runSteps(jobBlock(workflow, "test"));
     expect(commands).toEqual([
@@ -95,7 +95,7 @@ describe("release hygiene", () => {
 
     const githubRelease = jobBlock(workflow, "github-release");
     expect(githubRelease).toMatch(/^ {4}needs: \[build, publish-npm\]$/m);
-    expect(githubRelease).toContain("softprops/action-gh-release@v2");
+    expect(githubRelease).toContain("softprops/action-gh-release@v3");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN");
     expect(workflow).not.toContain("npm publish --access public");
   });

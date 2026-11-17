@@ -57,12 +57,12 @@
   },
   "homepage": "https://github.com/pijusz/mcp-msads#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.2",
-    "@types/bun": "1.4.3",
+    "@biomejs/biome": "2.6.8",
+    "@types/bun": "1.4.4",
     "typescript": "7.0.2"
   },
   "mcpName": "io.github.pijusz/mcp-msads"
