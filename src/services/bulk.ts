@@ -30,7 +30,13 @@ export const MAX_BULK_CAMPAIGN_IDS = 1000;
  * a previous download.
  */
 
-/** The entity families a bulk download can request. */
+/**
+ * The entity families a bulk download can request — a curated subset of the
+ * Bulk `DownloadEntity` enum. There is no umbrella "AdExtensions" or
+ * "ConversionGoals" value: extensions are requested per type (the library
+ * records) plus Campaign- and AdGroup-prefixed association records, and goals per type
+ * (`ConversionGoal` is the campaign-level goal record).
+ */
 export const DOWNLOAD_ENTITIES = [
   "Campaigns",
   "AdGroups",
@@ -40,15 +46,70 @@ export const DOWNLOAD_ENTITIES = [
   "BidStrategies",
   "Labels",
   "NegativeKeywordLists",
+  "SharedNegativeKeywords",
+  "CampaignNegativeKeywordListAssociations",
   "CampaignNegativeKeywords",
   "AdGroupNegativeKeywords",
-  "AdExtensions",
   "Audiences",
   "AdGroupTargetCriterions",
   "CampaignTargetCriterions",
-  "ConversionGoals",
   "AssetGroups",
   "Experiments",
+  "SitelinkAdExtensions",
+  "CampaignSitelinkAdExtensions",
+  "AdGroupSitelinkAdExtensions",
+  "CalloutAdExtensions",
+  "CampaignCalloutAdExtensions",
+  "AdGroupCalloutAdExtensions",
+  "StructuredSnippetAdExtensions",
+  "CampaignStructuredSnippetAdExtensions",
+  "AdGroupStructuredSnippetAdExtensions",
+  "CallAdExtensions",
+  "CampaignCallAdExtensions",
+  "ImageAdExtensions",
+  "CampaignImageAdExtensions",
+  "AdGroupImageAdExtensions",
+  "LogoAdExtensions",
+  "CampaignLogoAdExtensions",
+  "AdGroupLogoAdExtensions",
+  "PriceAdExtensions",
+  "CampaignPriceAdExtensions",
+  "AdGroupPriceAdExtensions",
+  "PromotionAdExtensions",
+  "CampaignPromotionAdExtensions",
+  "AdGroupPromotionAdExtensions",
+  "ReviewAdExtensions",
+  "CampaignReviewAdExtensions",
+  "AdGroupReviewAdExtensions",
+  "ActionAdExtensions",
+  "CampaignActionAdExtensions",
+  "AdGroupActionAdExtensions",
+  "AppAdExtensions",
+  "CampaignAppAdExtensions",
+  "AdGroupAppAdExtensions",
+  "FilterLinkAdExtensions",
+  "CampaignFilterLinkAdExtensions",
+  "AdGroupFilterLinkAdExtensions",
+  "FlyerAdExtensions",
+  "CampaignFlyerAdExtensions",
+  "AdGroupFlyerAdExtensions",
+  "LocationAdExtensions",
+  "CampaignLocationAdExtensions",
+  "VideoAdExtensions",
+  "CampaignVideoAdExtensions",
+  "AdGroupVideoAdExtensions",
+  "LeadFormAdExtensions",
+  "CampaignLeadFormAdExtensions",
+  "DisclaimerAdExtensions",
+  "CampaignDisclaimerAdExtensions",
+  "ConversionGoal",
+  "UrlGoal",
+  "EventGoal",
+  "DurationGoal",
+  "PagesViewedPerVisitGoal",
+  "AppInstallGoal",
+  "OfflineConversionGoal",
+  "InStoreTransactionGoal",
 ] as const;
 
 export interface BulkDownloadInput {
@@ -105,9 +166,10 @@ export async function submitBulkDownload(
 
   const byCampaign = Boolean(input.campaignIds?.length);
   if (byCampaign) {
+    // Bulk CampaignScope is { CampaignId, ParentAccountId }.
     body.Campaigns = input.campaignIds?.map((id) => ({
-      AccountId: ids.accountId,
       CampaignId: id,
+      ParentAccountId: ids.accountId,
     }));
   } else {
     body.AccountIds = [ids.accountId];

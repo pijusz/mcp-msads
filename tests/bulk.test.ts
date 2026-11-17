@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resetAuthForTesting } from "@/auth/oauth";
 import { resetEnvForTesting } from "@/config/env";
-import { buildBulkCsv, fetchBulkFile, submitBulkDownload } from "@/services/bulk";
+import {
+  buildBulkCsv,
+  DOWNLOAD_ENTITIES,
+  fetchBulkFile,
+  submitBulkDownload,
+} from "@/services/bulk";
 import { zipSync } from "@/utils/zip";
 import { installMockFetch, type MockFetch, setTestEnv, tokenResponse } from "./_mock";
 import { BULK_ZIP } from "./fixtures/zip-archives";
@@ -71,8 +76,23 @@ describe("submitBulkDownload", () => {
     mock.queue("DownloadByCampaignIds", { json: { DownloadRequestId: "dl-2" } });
     await submitBulkDownload(IDS, { entities: ["Keywords"], campaignIds: ["900001"] });
     const body = mock.callsTo("DownloadByCampaignIds")[0]?.body as any;
-    expect(body.Campaigns).toEqual([{ AccountId: "512300", CampaignId: "900001" }]);
+    expect(body.Campaigns).toEqual([{ CampaignId: "900001", ParentAccountId: "512300" }]);
     expect(body.AccountIds).toBeUndefined();
+  });
+
+  test("offers only real DownloadEntity values", () => {
+    // There is no umbrella "AdExtensions" or "ConversionGoals" entity; the API
+    // rejects them. Extensions and goals are requested per type.
+    const entities: readonly string[] = DOWNLOAD_ENTITIES;
+    expect(entities).not.toContain("AdExtensions");
+    expect(entities).not.toContain("ConversionGoals");
+    for (const value of [
+      "SitelinkAdExtensions",
+      "CampaignSitelinkAdExtensions",
+      "UrlGoal",
+    ]) {
+      expect(entities).toContain(value);
+    }
   });
 
   test("requires at least one entity family", async () => {

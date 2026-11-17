@@ -854,7 +854,7 @@ describe("dedicated service request contracts", () => {
           DownloadEntities: ["Campaigns", "Keywords"],
           DownloadFileType: "Tsv",
           FormatVersion: "6.0",
-          Campaigns: [{ AccountId: IDS.accountId, CampaignId: "8000000000000001" }],
+          Campaigns: [{ CampaignId: "8000000000000001", ParentAccountId: IDS.accountId }],
         },
       ],
       ["/Bulk/v13/BulkDownloadStatus/Query", { RequestId: "download-1" }],
