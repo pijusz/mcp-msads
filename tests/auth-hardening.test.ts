@@ -36,7 +36,12 @@ import {
   prepareSetupOutput,
   resolveSetupOutput,
 } from "@/auth/setup";
-import { loadDotEnvIfPresent, loadEnv, resetEnvForTesting } from "@/config/env";
+import {
+  allowCwdDotEnv,
+  loadDotEnvIfPresent,
+  loadEnv,
+  resetEnvForTesting,
+} from "@/config/env";
 import { setTestEnv } from "./_mock";
 import { denyFetch } from "./_network-deny";
 
@@ -293,6 +298,37 @@ describe("setup safety", () => {
     );
     if (process.platform !== "win32") {
       expect(statSync(join(root, "config", "mcp-msads")).mode & 0o777).toBe(0o700);
+    }
+  });
+
+  test("the server ignores ./.env unless MSADS_ENV_FILE names it or setup runs", () => {
+    const root = temporaryDirectory();
+    writeFileSync(join(root, ".env"), "MSADS_ACCOUNT_ID=333\n");
+
+    const originalCwd = process.cwd();
+    const originalFile = process.env.MSADS_ENV_FILE;
+    const originalAccount = process.env.MSADS_ACCOUNT_ID;
+    try {
+      process.chdir(root);
+      delete process.env.MSADS_ENV_FILE;
+      delete process.env.MSADS_ACCOUNT_ID;
+      resetEnvForTesting();
+      loadDotEnvIfPresent();
+      // An MCP client spawns the server in the user's project directory; an
+      // unrelated project .env must not configure it.
+      expect(process.env.MSADS_ACCOUNT_ID).toBeUndefined();
+
+      resetEnvForTesting();
+      allowCwdDotEnv();
+      loadDotEnvIfPresent();
+      expect({ ...process.env }.MSADS_ACCOUNT_ID).toBe("333");
+    } finally {
+      process.chdir(originalCwd);
+      if (originalFile === undefined) delete process.env.MSADS_ENV_FILE;
+      else process.env.MSADS_ENV_FILE = originalFile;
+      if (originalAccount === undefined) delete process.env.MSADS_ACCOUNT_ID;
+      else process.env.MSADS_ACCOUNT_ID = originalAccount;
+      resetEnvForTesting();
     }
   });
 

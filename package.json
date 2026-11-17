@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "dev": "bun src/index.ts",
-    "build": "bun build src/index.ts --compile --outfile=mcp-msads",
+    "build": "bun build src/index.ts --compile --no-compile-autoload-dotenv --outfile=mcp-msads",
     "build:npm": "bun build src/index.ts --bundle --target node --outfile dist/index.js && node -e \"const f='dist/index.js';require('fs').writeFileSync(f,require('fs').readFileSync(f,'utf8').replace('#!/usr/bin/env bun','#!/usr/bin/env node'))\"",
     "prepublishOnly": "bun run build:npm && bun run version:check",
     "verify:package": "bun --no-env-file scripts/verify-package.ts",

@@ -170,7 +170,11 @@ exact callback URI.
   trailing comments, with a size check that catches truncated downloads.
 - **CSV parser** (`utils/csv.ts`) — RFC 4180 with quoted delimiters, embedded
   newlines, and doubled-quote escapes, plus the Microsoft report envelope.
-- **dotenv loader**, **retry/backoff**, **in-memory cache**.
+- **dotenv loader**, **retry/backoff**, **in-memory cache**. The loader reads
+  only `MSADS_ENV_FILE`; the server never auto-loads `./.env`, because MCP
+  clients spawn it in the user's project directory where an unrelated `.env`
+  could silently retarget it. `setup` (run by hand) still falls back to
+  `./.env`, and compiled binaries are built with `--no-compile-autoload-dotenv`.
 
 ## 12. Backoff is per-error-class
 

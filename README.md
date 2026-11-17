@@ -375,6 +375,7 @@ See [.env.example](.env.example) for the full list. The essentials:
 | `MSADS_REFRESH_TOKEN` / `MSADS_TOKEN_FILE` | One is required |
 | `MSADS_ACCOUNT_ID` | Default ad account |
 | `MSADS_ENVIRONMENT` | `production` (default) or `sandbox` |
+| `MSADS_ENV_FILE` | Env file for the server to load. The server never reads `./.env` by itself — MCP clients start it in your project directory — so point this at your config file instead (`setup` alone still falls back to `./.env`) |
 
 ## Development
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { runSetup } from "@/auth/setup";
-import { loadEnv, shouldValidateAtStartup } from "@/config/env";
+import { allowCwdDotEnv, loadEnv, shouldValidateAtStartup } from "@/config/env";
 import { createServer } from "@/server";
 import { getUser } from "@/services/accounts";
 import { log } from "@/utils/logger";
@@ -20,6 +20,9 @@ if (process.argv[2] === "setup") {
   // ahead of zod's class definitions and makes the published bundle throw
   // "Class2 is not a constructor" on startup. setup.ts pulls only Node
   // builtins, so deferring it bought nothing anyway.
+  // Setup is run by hand in a directory the user chose, so it may read ./.env.
+  // The server itself only reads MSADS_ENV_FILE (see loadDotEnvIfPresent).
+  allowCwdDotEnv();
   try {
     await runSetup(process.argv.slice(3));
   } catch (err) {

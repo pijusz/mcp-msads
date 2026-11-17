@@ -106,6 +106,22 @@ export function parseEnvLine(rawLine: string): { key: string; value: string } | 
   return { key, value: value.replace(/\\n/g, "\n") };
 }
 
+let _cwdDotEnvAllowed = false;
+
+/**
+ * Let `loadDotEnvIfPresent` fall back to `./.env`. Only the interactive
+ * `setup` command enables this.
+ */
+export function allowCwdDotEnv(): void {
+  _cwdDotEnvAllowed = true;
+}
+
+/**
+ * Load MSADS_ENV_FILE, if set. A `.env` in the working directory is NOT read
+ * by the server: MCP clients spawn it in the user's project directory, whose
+ * unrelated `.env` could silently retarget it (another account, sandbox). Only
+ * `setup` — run by hand, in a directory the user chose — falls back to `.env`.
+ */
 export function loadDotEnvIfPresent(): void {
   if (_dotenvLoaded) return;
   _dotenvLoaded = true;
@@ -114,8 +130,8 @@ export function loadDotEnvIfPresent(): void {
   // A production run that omits MSADS_ENVIRONMENT expects the production
   // default; silently inheriting MSADS_ENVIRONMENT=sandbox from .env would
   // point it at the sandbox hosts with no visible sign.
-  const envFile = process.env.MSADS_ENV_FILE || ".env";
-  if (!existsSync(envFile)) return;
+  const envFile = process.env.MSADS_ENV_FILE || (_cwdDotEnvAllowed ? ".env" : "");
+  if (!envFile || !existsSync(envFile)) return;
 
   let text: string;
   try {
@@ -161,6 +177,7 @@ export function getEnv(): Env {
 export function resetEnvForTesting(): void {
   _env = null;
   _dotenvLoaded = false;
+  _cwdDotEnvAllowed = false;
 }
 
 export function isGoogleIdentity(): boolean {

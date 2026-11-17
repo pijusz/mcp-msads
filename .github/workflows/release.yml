@@ -44,7 +44,7 @@ jobs:
         shell: bash
 
       - name: Build binary
-        run: bun build src/index.ts --compile --target=${{ matrix.target }} --outfile=${{ matrix.artifact }}
+        run: bun build src/index.ts --compile --no-compile-autoload-dotenv --target=${{ matrix.target }} --outfile=${{ matrix.artifact }}
 
       - uses: actions/upload-artifact@v7
         with:
