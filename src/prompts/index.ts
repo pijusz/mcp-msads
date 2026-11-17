@@ -140,7 +140,7 @@ Present for review. Do not create keywords without being asked; if asked, create
 
 1. get_monthly_spend for the current and previous month. This is the BILLED figure — it differs from report Spend, which shows delivery before invalid-traffic credits and adjustments. Use billing for money questions.
 
-2. run_report with budget_summary (daily aggregation only, 24-month retention) for budget versus spend-to-date, and campaign_performance for delivery.
+2. run_report with budget_summary (one row per campaign per Date; it takes no aggregation argument; 24-month retention) for budget versus spend-to-date, and campaign_performance for delivery.
 
 3. list_budgets to see which campaigns share a budget. A shared budget exhausted by one campaign starves every campaign attached to it, which looks like a targeting problem and is not.
 

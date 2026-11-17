@@ -202,7 +202,15 @@ export function registerReportTools(server: McpServer): void {
         .array(z.string())
         .max(300)
         .optional()
-        .describe("Narrow to these ad groups (max 300)."),
+        .describe(
+          "Narrow to these ad groups (max 300). Pass their parent campaign as campaign_id.",
+        ),
+      campaign_id: z
+        .string()
+        .optional()
+        .describe(
+          "Parent campaign of ad_group_ids / asset_group_ids, sent as CampaignId in each scope entry. A single campaign_ids entry is used the same way.",
+        ),
       asset_group_ids: z
         .array(z.string())
         .max(100)
@@ -244,6 +252,7 @@ export function registerReportTools(server: McpServer): void {
         ...(Array.isArray(args.asset_group_ids)
           ? { assetGroupIds: args.asset_group_ids.map(String) }
           : {}),
+        ...(args.campaign_id ? { campaignId: String(args.campaign_id) } : {}),
       };
 
       const result = await runReport(

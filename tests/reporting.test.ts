@@ -60,6 +60,18 @@ describe("buildScope", () => {
     });
   });
 
+  test("child scope entries carry their parent CampaignId when given", () => {
+    expect(buildScope("adgroup", { adGroupIds: ["3"], campaignId: "7" }, "42")).toEqual({
+      AdGroups: [{ AccountId: "42", CampaignId: "7", AdGroupId: "3" }],
+    });
+    expect(
+      buildScope("adgroup", { adGroupIds: ["3"], campaignIds: ["7"] }, "42"),
+    ).toEqual({ AdGroups: [{ AccountId: "42", CampaignId: "7", AdGroupId: "3" }] });
+    expect(
+      buildScope("assetgroup", { assetGroupIds: ["5"], campaignId: "7" }, "42"),
+    ).toEqual({ AssetGroups: [{ AccountId: "42", CampaignId: "7", AssetGroupId: "5" }] });
+  });
+
   test("falls back to the whole account when no children are named", () => {
     expect(buildScope("adgroup", {}, "42")).toEqual({ AccountIds: ["42"] });
   });
@@ -158,6 +170,17 @@ describe("buildReportRequest", () => {
     ).toThrow(/is after/);
   });
 
+  test("allows tomorrow (UTC) as an end date for time zones ahead of UTC", () => {
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    expect(() =>
+      buildReportRequest({ ...base, startDate: "2026-01-01", endDate: tomorrow }),
+    ).not.toThrow();
+    const dayAfter = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    expect(() =>
+      buildReportRequest({ ...base, startDate: "2026-01-01", endDate: dayAfter }),
+    ).toThrow(/future/);
+  });
+
   test("rejects a future end date (error 2041)", () => {
     expect(() =>
       buildReportRequest({ ...base, startDate: "2026-01-01", endDate: "2099-01-01" }),
@@ -184,6 +207,36 @@ describe("buildReportRequest", () => {
         }),
       ).toThrow(/does not support custom date ranges/);
     }
+  });
+
+  test("ignores a caller aggregation, with a warning, on types without one", () => {
+    const { body, warnings } = buildReportRequest({
+      reportType: "budget_summary",
+      accountId: "42",
+      aggregation: "Weekly",
+    });
+    const req = (body as any).ReportRequest;
+    expect(req.Aggregation).toBeUndefined();
+    // budget_summary has no TimePeriod column; it must not be auto-added.
+    expect(req.Columns).not.toContain("TimePeriod");
+    expect(warnings.join(" ")).toMatch(/no aggregation setting/);
+  });
+
+  test("adds a type's required columns when the caller omits them", () => {
+    const { body, warnings } = buildReportRequest({
+      reportType: "budget_summary",
+      accountId: "42",
+      columns: ["CampaignName", "MonthlyBudget"],
+    });
+    const columns = (body as any).ReportRequest.Columns as string[];
+    for (const required of ["AccountName", "AccountNumber", "CurrencyCode", "Date"]) {
+      expect(columns).toContain(required);
+    }
+    expect(warnings.join(" ")).toMatch(/required column "AccountNumber"/);
+  });
+
+  test("change history uses the account-through-ad-group scope", () => {
+    expect(REPORT_TYPES.campaign_change_history!.scope).toBe("adgroup");
   });
 
   test("omits Aggregation for report types that have no such element", () => {
@@ -226,6 +279,18 @@ describe("buildReportRequest", () => {
         returnOnlyCompleteData: true,
       }),
     ).toThrow(/2004/);
+  });
+
+  test("every type's default columns include its documented required columns", () => {
+    for (const name of REPORT_TYPE_NAMES) {
+      const spec = REPORT_TYPES[name]!;
+      for (const required of spec.requiredColumns ?? []) {
+        expect(spec.defaultColumns, `${name} defaults`).toContain(required);
+      }
+      // Defaults must already be complete: nothing gets auto-added.
+      const { warnings } = buildReportRequest({ reportType: name, accountId: "42" });
+      expect(warnings.join(" "), name).not.toMatch(/required column/);
+    }
   });
 
   test("every registered report type builds without throwing", () => {

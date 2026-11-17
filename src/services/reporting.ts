@@ -59,6 +59,11 @@ export interface ScopeInput {
   campaignIds?: string[];
   adGroupIds?: string[];
   assetGroupIds?: string[];
+  /**
+   * Parent campaign of `adGroupIds` / `assetGroupIds`. AdGroupReportScope and
+   * AssetGroupReportScope both carry CampaignId alongside AccountId.
+   */
+  campaignId?: string;
 }
 
 /** Scope caps, enforced client-side so the failure names the real limit. */
@@ -122,11 +127,19 @@ export function buildScope(
     return campaigns?.length ? { Campaigns: campaigns } : { AccountIds: accountIds };
   }
 
+  // The parent campaign of child (ad group / asset group) scope entries: an
+  // explicit campaignId, or the sole entry of campaignIds.
+  const parentCampaignId =
+    input.campaignId ??
+    (input.campaignIds?.length === 1 ? input.campaignIds[0] : undefined);
+  const withParent = parentCampaignId ? { CampaignId: parentCampaignId } : {};
+
   if (kind === "assetgroup") {
     if (input.assetGroupIds?.length) {
       return {
         AssetGroups: input.assetGroupIds.map((id) => ({
           AccountId: accountId,
+          ...withParent,
           AssetGroupId: id,
         })),
       };
@@ -139,6 +152,7 @@ export function buildScope(
     return {
       AdGroups: input.adGroupIds.map((id) => ({
         AccountId: accountId,
+        ...withParent,
         AdGroupId: id,
       })),
     };
@@ -203,12 +217,28 @@ export function buildReportRequest(input: ReportRequestInput): BuiltReportReques
     }
   }
 
-  const aggregation = input.aggregation ?? (spec.noAggregation ? undefined : "Daily");
+  for (const required of spec.requiredColumns ?? []) {
+    if (!columns.includes(required)) {
+      columns.push(required);
+      warnings.push(`Added the required column "${required}" for ${input.reportType}.`);
+    }
+  }
+
+  // Types without an Aggregation element (budget_summary, change history,
+  // negative keyword conflicts) reject one, and have no TimePeriod column.
+  if (spec.noAggregation && input.aggregation) {
+    warnings.push(
+      `The ${input.reportType} report has no aggregation setting; ignored aggregation "${input.aggregation}".`,
+    );
+  }
+  const aggregation = spec.noAggregation ? undefined : (input.aggregation ?? "Daily");
 
   // Error 2034: TimePeriod with Summary. The inverse — omitting TimePeriod for
   // a non-Summary aggregation — is worse, because the API silently downgrades
   // to Summary and the caller gets numbers that don't mean what they asked for.
-  if (aggregation && aggregation !== "Summary" && !spec.noTimePeriodColumn) {
+  if (spec.noAggregation) {
+    // No aggregation, so neither the TimePeriod auto-add nor the 2034 check.
+  } else if (aggregation && aggregation !== "Summary" && !spec.noTimePeriodColumn) {
     if (!columns.includes("TimePeriod")) {
       columns.unshift("TimePeriod");
       warnings.push(
@@ -241,6 +271,19 @@ export function buildReportRequest(input: ReportRequestInput): BuiltReportReques
     Columns: columns,
     Scope: buildScope(spec.scope, input.scope ?? {}, input.accountId),
   };
+
+  const scope = input.scope ?? {};
+  const childIds =
+    spec.scope === "adgroup"
+      ? scope.adGroupIds
+      : spec.scope === "assetgroup"
+        ? scope.assetGroupIds
+        : undefined;
+  if (childIds?.length && !scope.campaignId && (scope.campaignIds?.length ?? 0) !== 1) {
+    warnings.push(
+      "Child scope entries were sent without CampaignId (the AdGroupReportScope / AssetGroupReportScope schema lists it). Pass campaign_id if the API rejects the scope.",
+    );
+  }
 
   if (aggregation) request.Aggregation = aggregation;
 
@@ -317,8 +360,10 @@ function buildTime(input: ReportRequestInput): Record<string, unknown> {
         message: `start_date (${input.startDate}) is after end_date (${input.endDate}).`,
       });
     }
-    const today = new Date().toISOString().slice(0, 10);
-    if (input.endDate > today) {
+    // "Today" in the report time zone can be up to a day ahead of UTC (e.g.
+    // UTC+13), so only reject end dates beyond tomorrow in UTC.
+    const latest = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    if (input.endDate > latest) {
       throw new MsAdsError({
         message: `end_date (${input.endDate}) is in the future; the API rejects this (error 2041).`,
       });

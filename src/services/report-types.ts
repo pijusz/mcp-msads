@@ -32,6 +32,11 @@ export interface ReportTypeSpec {
   noTimePeriodColumn?: boolean;
   /** Sensible starting columns — every report needs ≥1 attribute and ≥1 metric. */
   defaultColumns: string[];
+  /**
+   * Columns the type's *ReportColumn page lists under "Required Columns",
+   * excluding TimePeriod (handled with aggregation). Missing ones are added.
+   */
+  requiredColumns?: string[];
 }
 
 /**
@@ -128,6 +133,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   search_query_performance: {
     requestType: "SearchQueryPerformanceReportRequest",
+    requiredColumns: ["SearchQuery"],
     scope: "adgroup",
     description:
       "Actual search terms that triggered ads. Only terms with meaningful click volume in the last 30 days appear. Hourly retention is just 1 month.",
@@ -179,6 +185,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   age_gender_audience: {
     requestType: "AgeGenderAudienceReportRequest",
+    requiredColumns: ["AgeGroup", "Gender"],
     scope: "adgroup",
     description: "Performance split by age bracket and gender.",
     defaultColumns: [
@@ -210,6 +217,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   goals_and_funnels: {
     requestType: "GoalsAndFunnelsReportRequest",
+    requiredColumns: ["Goal"],
     scope: "adgroup",
     description: "Conversion funnel steps by goal. Hourly retention is 1 month.",
     defaultColumns: [
@@ -226,6 +234,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   destination_url_performance: {
     requestType: "DestinationUrlPerformanceReportRequest",
+    requiredColumns: ["DestinationUrl"],
     scope: "adgroup",
     description: "Landing page (destination URL) performance.",
     defaultColumns: [
@@ -240,6 +249,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   share_of_voice: {
     requestType: "ShareOfVoiceReportRequest",
+    requiredColumns: ["ImpressionSharePercent", "KeywordId"],
     scope: "adgroup",
     description:
       "Impression share and share lost to budget or rank, per keyword. No hourly aggregation; 6-month retention.",
@@ -261,13 +271,23 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   budget_summary: {
     requestType: "BudgetSummaryReportRequest",
+    requiredColumns: [
+      "AccountName",
+      "AccountNumber",
+      "CampaignName",
+      "CurrencyCode",
+      "Date",
+    ],
     scope: "campaign",
     description:
-      "Monthly budget, spend to date, and whether spend is on target. Daily aggregation only, 24-month retention.",
+      "Monthly budget, spend to date, and whether spend is on target. One row per campaign per Date — there is no aggregation setting. 24-month retention.",
     noAggregation: true,
     defaultColumns: [
+      "Date",
       "AccountName",
+      "AccountNumber",
       "CampaignName",
+      "CurrencyCode",
       "MonthlyBudget",
       "DailySpend",
       "MonthToDateSpend",
@@ -275,7 +295,9 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   campaign_change_history: {
     requestType: "SearchCampaignChangeHistoryReportRequest",
-    scope: "campaign",
+    requiredColumns: ["DateTime"],
+    // AccountThroughAdGroupReportScope, per the request's Scope element.
+    scope: "adgroup",
     description: "Who changed what and when, with old and new values. 6-month retention.",
     noAggregation: true,
     defaultColumns: [
@@ -291,6 +313,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   negative_keyword_conflicts: {
     requestType: "NegativeKeywordConflictReportRequest",
+    requiredColumns: ["AccountName", "Keyword", "NegativeKeyword"],
     scope: "adgroup",
     description:
       "Keywords blocked by your own negative keywords. A snapshot of current settings — no time range, no aggregation, no history.",
@@ -307,6 +330,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   product_partition_performance: {
     requestType: "ProductPartitionPerformanceReportRequest",
+    requiredColumns: ["PartitionType"],
     scope: "adgroup",
     description: "Shopping performance by product group and partition type.",
     defaultColumns: [
@@ -324,6 +348,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   product_search_query_performance: {
     requestType: "ProductSearchQueryPerformanceReportRequest",
+    requiredColumns: ["AccountName", "CampaignName", "SearchQuery"],
     scope: "adgroup",
     description: "Search terms for Shopping campaigns. Hourly retention is 1 month.",
     defaultColumns: [
@@ -341,6 +366,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   asset_group_performance: {
     requestType: "AssetGroupPerformanceReportRequest",
+    requiredColumns: ["AssetGroupName"],
     scope: "assetgroup",
     description: "Performance Max asset group performance.",
     defaultColumns: [
@@ -380,6 +406,13 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   professional_demographics: {
     requestType: "ProfessionalDemographicsAudienceReportRequest",
+    requiredColumns: [
+      "AccountName",
+      "AdGroupName",
+      "CompanyName",
+      "IndustryName",
+      "JobFunctionName",
+    ],
     scope: "adgroup",
     description:
       "LinkedIn-derived performance by company, industry, and job function. Unique to Microsoft Advertising.",
@@ -400,6 +433,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   audience_performance: {
     requestType: "AudiencePerformanceReportRequest",
+    requiredColumns: ["AudienceId"],
     scope: "adgroup",
     description: "Performance by audience and association status.",
     defaultColumns: [
@@ -418,6 +452,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   ad_extension_by_ad: {
     requestType: "AdExtensionByAdReportRequest",
+    requiredColumns: ["AdExtensionType"],
     scope: "adgroup",
     description: "Ad extension performance broken out per ad.",
     defaultColumns: [
@@ -432,6 +467,12 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   ad_extension_detail: {
     requestType: "AdExtensionDetailReportRequest",
+    requiredColumns: [
+      "AdExtensionId",
+      "AdExtensionPropertyValue",
+      "AdExtensionType",
+      "AdExtensionTypeId",
+    ],
     scope: "adgroup",
     description: "Effectiveness of individual extension items, e.g. each sitelink.",
     defaultColumns: [
@@ -450,6 +491,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   call_detail: {
     requestType: "CallDetailReportRequest",
+    requiredColumns: ["Duration", "EndTime", "StartTime"],
     scope: "adgroup",
     noTimePeriodColumn: true,
     description: "Forwarded call duration and phone spend. 6-month retention.",
@@ -468,6 +510,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   dsa_search_query: {
     requestType: "DSASearchQueryPerformanceReportRequest",
+    requiredColumns: ["SearchQuery"],
     scope: "adgroup",
     description:
       "Search terms that triggered dynamic search ads. Hourly retention is 1 month.",
@@ -484,6 +527,7 @@ export const REPORT_TYPES: Record<string, ReportTypeSpec> = {
   },
   publisher_usage_performance: {
     requestType: "PublisherUsagePerformanceReportRequest",
+    requiredColumns: ["PublisherUrl"],
     scope: "adgroup",
     description:
       "Performance per publisher website, for building exclusion lists. Hourly retention is 2 months.",
