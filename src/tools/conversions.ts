@@ -203,7 +203,7 @@ conversion_name must match an existing conversion goal name EXACTLY. A mismatch 
 
 Timing rules: conversion_time is ISO 8601 UTC, must be after the click, and must fall within the last 90 days. A goal created less than 2 hours ago may not accept data yet, and uploaded conversions take up to 6 hours to appear in reporting.
 
-For conversions from the last 7 days, send_conversion_events is lower-latency and gives per-event validation feedback; this tool is the right one for anything older, up to 90 days.
+send_conversion_events (CAPI) also accepts events up to 90 days old and gives per-event validation feedback; this tool is the right one when you have a click id or offline sale to attribute to an existing offline conversion goal.
 
 This operation returns no per-item confirmation. An empty error list is the only success signal there is.`,
     {
@@ -344,11 +344,11 @@ This is the server-side counterpart to the UET JavaScript tag, for conversions a
 
 Each event needs at least one identifier. Pass email/phone as PLAINTEXT and they are normalized and hashed here; msclkid, anonymous_id, and external_id are opaque and sent as given.
 
-event_time is Unix SECONDS in UTC (not milliseconds) and must fall within the last 7 days. Older conversions belong in upload_offline_conversions.
+event_time is Unix SECONDS in UTC (not milliseconds) and must fall within the last ${capi.MAX_EVENT_AGE_DAYS} days.
 
 If the same conversion is also sent by the UET JavaScript tag, use the same tag id, event_id, and event_name on both so they deduplicate rather than double-count.
 
-Up to ${capi.MAX_EVENTS_PER_BATCH} events per call. A warning in the response means the event was accepted with a field silently dropped, which is partial data loss rather than success.`,
+Up to ${capi.MAX_EVENTS_PER_BATCH} events per call. The result reports eventsReceived (events Microsoft processed); accepted is false when any event was skipped. A warning in the response means the event was accepted with a field silently dropped, which is partial data loss rather than success.`,
     {
       ...ACCOUNT_ARGS,
       tag_id: z.string().describe("UET tag id owned by the selected account."),

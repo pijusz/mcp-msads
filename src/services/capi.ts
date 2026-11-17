@@ -39,10 +39,13 @@ const DIAGNOSTIC_FIELDS = new Set([
   "iswarning",
   "parameter",
   "status",
+  "propertyname",
+  "errormessage",
+  "attemptedvalue",
 ]);
 
-/** Events older than this are rejected outright. */
-const MAX_EVENT_AGE_DAYS = 7;
+/** CAPI rejects events whose eventTime is older than this (per the CAPI guide). */
+export const MAX_EVENT_AGE_DAYS = 90;
 
 export type CapiEventType = "pageLoad" | "custom";
 
@@ -163,8 +166,8 @@ export function validateEvent(event: CapiEvent, index: number): void {
     if (ageDays > MAX_EVENT_AGE_DAYS) {
       throw new MsAdsError({
         message:
-          `Event at index ${index} is ${Math.round(ageDays)} days old. CAPI rejects events older than ${MAX_EVENT_AGE_DAYS} days. ` +
-          "For older conversions use the offline conversions API instead.",
+          `Event at index ${index} is ${Math.round(ageDays)} days old. CAPI rejects events older than ${MAX_EVENT_AGE_DAYS} days, ` +
+          "and so does the offline conversions API — conversions this old can no longer be uploaded.",
       });
     }
     if (event.eventTime > Date.now() / 1000 + 300) {
@@ -176,9 +179,14 @@ export function validateEvent(event: CapiEvent, index: number): void {
 }
 
 export interface CapiResult {
-  /** True when the whole batch was accepted. */
+  /**
+   * True only when no event was dropped: no validation errors, and
+   * `eventsReceived` (when reported) covers every event sent.
+   */
   accepted: boolean;
   eventsSent: number;
+  /** Events Microsoft reports as processed; null when the response omits it. */
+  eventsReceived: number | null;
   /** Validation failures — these events were dropped. */
   errors: unknown[];
   /**
@@ -270,11 +278,22 @@ export async function sendEvents(
       `CAPI accepted the batch with ${warnings.length} warning(s); the offending fields were dropped.`,
     );
   }
+  const eventsReceived = readEventsReceived(body);
+  const dropped =
+    eventsReceived === null ? 0 : Math.max(0, events.length - eventsReceived);
 
   return {
-    accepted: errors.length === 0,
+    accepted: split.errors.length === 0 && dropped === 0,
     eventsSent: events.length,
-    errors,
+    eventsReceived,
+    errors:
+      errors.length === 0 && dropped > 0
+        ? [
+            {
+              message: `${dropped} of ${events.length} event(s) were not processed, but Microsoft returned no validation details for them.`,
+            },
+          ]
+        : errors,
     warnings,
   };
 }
@@ -323,10 +342,30 @@ function sanitizeDiagnostics(
     );
 }
 
+function readEventsReceived(body: unknown): number | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>;
+  const value = b.eventsReceived ?? b.EventsReceived;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** The documented `{ "error": { code, message, details } }` envelope, if present. */
+function errorEnvelope(body: unknown): Record<string, unknown> | null {
+  if (!body || typeof body !== "object") return null;
+  const error = (body as Record<string, unknown>).error;
+  return error && typeof error === "object" && !Array.isArray(error)
+    ? (error as Record<string, unknown>)
+    : null;
+}
+
 /** Reduce provider errors to a bounded, non-secret structure safe for MCP output. */
 export function safeCapiDiagnostics(body: unknown, secret?: string): SafeCapiDiagnostics {
   const split = splitDiagnostics(body);
-  const fallback = split.errors.length === 0 && split.warnings.length === 0 ? [body] : [];
+  // With no itemized details, report the envelope's own code/message.
+  const fallback =
+    split.errors.length === 0 && split.warnings.length === 0
+      ? [errorEnvelope(body) ?? body]
+      : [];
   const errors = sanitizeDiagnostics([...split.errors, ...fallback], secret);
   const warnings = sanitizeDiagnostics(split.warnings, secret);
   return {
@@ -343,7 +382,11 @@ export function safeCapiDiagnostics(body: unknown, secret?: string): SafeCapiDia
  *
  * Microsoft returns both in one list distinguished by an `isWarning` flag. An
  * error means the event was dropped; a warning means an optional field was
- * removed from an accepted event.
+ * removed from an accepted event. The documented shape is
+ * `{ "error": { "code", "message", "details": [{ index, propertyName,
+ * errorMessage, errorCode, isWarning, attemptedValue? }] } }`, on HTTP 400 and
+ * on HTTP 200 when continueOnValidationError skipped events or only warnings
+ * occurred. Flat `errors` lists are still read for robustness.
  */
 export function splitDiagnostics(body: unknown): {
   errors: unknown[];
@@ -352,7 +395,9 @@ export function splitDiagnostics(body: unknown): {
   if (!body || typeof body !== "object") return { errors: [], warnings: [] };
 
   const b = body as Record<string, unknown>;
+  const envelope = errorEnvelope(body);
   const list = [
+    ...(envelope && Array.isArray(envelope.details) ? envelope.details : []),
     ...(Array.isArray(b.errors) ? b.errors : []),
     ...(Array.isArray(b.Errors) ? b.Errors : []),
     ...(Array.isArray(b.validationErrors) ? b.validationErrors : []),

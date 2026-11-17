@@ -87,16 +87,16 @@ describe("validateEvent", () => {
     );
   });
 
-  test("rejects an event older than the 7-day window and names the alternative", () => {
-    const old = Math.floor(Date.now() / 1000) - 10 * 86_400;
-    expect(() => validateEvent(EVENT({ eventTime: old }), 0)).toThrow(
-      /offline conversions API/,
-    );
+  test("rejects an event older than the documented 90-day window", () => {
+    const old = Math.floor(Date.now() / 1000) - 91 * 86_400;
+    expect(() => validateEvent(EVENT({ eventTime: old }), 0)).toThrow(/90 days/);
   });
 
-  test("accepts an event inside the window", () => {
-    const recent = Math.floor(Date.now() / 1000) - 2 * 86_400;
-    expect(() => validateEvent(EVENT({ eventTime: recent }), 0)).not.toThrow();
+  test("accepts an event inside the 90-day window", () => {
+    for (const days of [2, 10, 89]) {
+      const recent = Math.floor(Date.now() / 1000) - days * 86_400;
+      expect(() => validateEvent(EVENT({ eventTime: recent }), 0)).not.toThrow();
+    }
   });
 
   test("catches milliseconds passed where seconds were expected", () => {
@@ -107,6 +107,33 @@ describe("validateEvent", () => {
   });
 });
 
+// The validation response shape from the CAPI integration guide.
+const DOC_ENVELOPE = {
+  eventsReceived: 1,
+  error: {
+    code: "ValidationError",
+    message: "One or multiple parameters did not pass validation checks, see details.",
+    details: [
+      {
+        index: 1,
+        propertyName: "data[1].eventTime",
+        attemptedValue: 1767793837,
+        errorMessage:
+          "'eventTime' must be a valid UNIX UTC timestamp in seconds within last 90 days.",
+        errorCode: "InvalidEventTime",
+        isWarning: false,
+      },
+      {
+        index: 0,
+        propertyName: "data[0].referrerUrl",
+        errorMessage: "'referrerUrl' must be a valid URL.",
+        errorCode: "InvalidUrl",
+        isWarning: true,
+      },
+    ],
+  },
+};
+
 describe("splitDiagnostics", () => {
   test("separates warnings from errors", () => {
     // A warning means the event landed with a field stripped — partial data
@@ -116,6 +143,12 @@ describe("splitDiagnostics", () => {
     });
     expect(warnings).toHaveLength(1);
     expect(errors).toHaveLength(1);
+  });
+
+  test("reads the documented error.details envelope", () => {
+    const { errors, warnings } = splitDiagnostics(DOC_ENVELOPE);
+    expect(errors).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
   });
 
   test("returns empty lists for a clean response", () => {
@@ -151,6 +184,74 @@ describe("sendEvents", () => {
       expect(captured!.body.continueOnValidationError).toBe(true);
       // eventTime is stamped when the caller omits it.
       expect(typeof captured!.body.data[0].eventTime).toBe("number");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("reports a partially processed 200 batch as not accepted, with details", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(DOC_ENVELOPE), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    try {
+      const result = await sendEvents("t", "key", [EVENT(), EVENT()]);
+      expect(result.accepted).toBe(false);
+      expect(result.eventsSent).toBe(2);
+      expect(result.eventsReceived).toBe(1);
+      expect(result.errors).toEqual([
+        {
+          index: 1,
+          propertyName: "data[1].eventTime",
+          attemptedValue: 1767793837,
+          errorMessage:
+            "'eventTime' must be a valid UNIX UTC timestamp in seconds within last 90 days.",
+          errorCode: "InvalidEventTime",
+          isWarning: false,
+        },
+      ]);
+      expect(result.warnings[0]).toMatchObject({ propertyName: "data[0].referrerUrl" });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("does not claim success when events were dropped without details", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ eventsReceived: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    try {
+      const result = await sendEvents("t", "key", [EVENT(), EVENT()]);
+      expect(result.accepted).toBe(false);
+      expect(JSON.stringify(result.errors)).toMatch(/1 of 2 event/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("surfaces the documented 400 envelope details", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(DOC_ENVELOPE), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    try {
+      let payload: ReturnType<typeof errorPayload> | undefined;
+      try {
+        await sendEvents("t", "key", [EVENT()]);
+      } catch (error) {
+        payload = errorPayload(error);
+      }
+      const diagnostics = payload?.error.diagnostics as {
+        errors: Array<Record<string, unknown>>;
+      };
+      expect(diagnostics.errors[0]).toMatchObject({
+        propertyName: "data[1].eventTime",
+        errorCode: "InvalidEventTime",
+      });
     } finally {
       globalThis.fetch = realFetch;
     }
