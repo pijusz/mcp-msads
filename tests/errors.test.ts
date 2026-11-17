@@ -113,6 +113,20 @@ describe("readPartialErrors", () => {
   });
 });
 
+describe("parseApiError BatchErrors", () => {
+  test("keeps the Index of fault-body BatchErrors", () => {
+    const err = parseApiError(400, {
+      TrackingId: "t",
+      BatchErrors: [
+        { Index: 3, Code: 1005, ErrorCode: "CampaignServiceInvalidName", Message: "bad" },
+      ],
+      OperationErrors: [],
+    });
+    expect(err.partialErrors).toMatchObject([{ index: 3, code: 1005 }]);
+    expect(err.message).toContain("CampaignServiceInvalidName");
+  });
+});
+
 describe("parseOAuthError", () => {
   test("explains invalid_grant and flags it as needing re-consent", () => {
     const err = parseOAuthError(400, {

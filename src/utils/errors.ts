@@ -263,14 +263,18 @@ export function parseApiError(status: number, body: unknown): MsAdsError {
   const errors = [
     ...readErrorArray(b.OperationErrors ?? b.operationErrors),
     ...readErrorArray(b.Errors ?? b.errors),
-    ...readErrorArray(b.BatchErrors ?? b.batchErrors),
+  ];
+  // ApiFaultDetail.BatchErrors are per-item: keep their Index so the caller
+  // can tell which entity failed, like PartialErrors on a 200.
+  const partialErrors = [
+    ...readPartialErrors({ PartialErrors: b.BatchErrors ?? b.batchErrors }),
+    ...readPartialErrors(b),
   ];
   // Some services return a single bare fault rather than an array.
-  if (errors.length === 0) {
+  if (errors.length === 0 && partialErrors.length === 0) {
     const single = readError(b);
     if (single) errors.push(single);
   }
-  const partialErrors = readPartialErrors(b);
   const trackingId =
     typeof b.TrackingId === "string"
       ? b.TrackingId
