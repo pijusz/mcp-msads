@@ -57,8 +57,11 @@ export function registerInsightTools(server: McpServer): void {
         .describe("Which attributes to return. Competition is always included."),
       min_search_volume: z.number().int().optional(),
       max_search_volume: z.number().int().optional(),
-      min_competition: z.number().min(0).max(1).optional().describe("0.0–1.0."),
-      max_competition: z.number().min(0).max(1).optional().describe("0.0–1.0."),
+      competition_levels: z
+        .array(z.enum(ai.COMPETITION_LEVELS))
+        .min(1)
+        .optional()
+        .describe("Keep only ideas in these competition bands: Low, Medium, High."),
       exclude_account_keywords: z
         .boolean()
         .optional()
@@ -85,11 +88,8 @@ export function registerInsightTools(server: McpServer): void {
         ...(args.max_search_volume !== undefined
           ? { maxSearchVolume: Number(args.max_search_volume) }
           : {}),
-        ...(args.min_competition !== undefined
-          ? { minCompetition: Number(args.min_competition) }
-          : {}),
-        ...(args.max_competition !== undefined
-          ? { maxCompetition: Number(args.max_competition) }
+        ...(Array.isArray(args.competition_levels)
+          ? { competitionLevels: args.competition_levels.map(String) }
           : {}),
         ...(args.exclude_account_keywords === true
           ? { excludeAccountKeywords: true }
@@ -98,7 +98,8 @@ export function registerInsightTools(server: McpServer): void {
 
       return collectionEnvelope("ideas", ideas, {
         limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
-        guidance: "Tighten the search-volume or competition filters, or raise limit.",
+        guidance:
+          "Tighten the search-volume or competition_levels filters, or raise limit.",
       });
     },
   });

@@ -20,6 +20,23 @@ describe("buildSearchParameters", () => {
     expect(network?.Network).toEqual({ Network: "OwnedAndOperatedAndSyndicatedSearch" });
   });
 
+  test("filters competition by CompetitionLevels, not a numeric range", () => {
+    const competition = buildSearchParameters({
+      ...BASE,
+      queries: ["a"],
+      competitionLevels: ["Low", "Medium"],
+    }).find((p) => p.Type === "CompetitionSearchParameter");
+    expect(competition).toEqual({
+      Type: "CompetitionSearchParameter",
+      CompetitionLevels: ["Low", "Medium"],
+    });
+    expect(
+      buildSearchParameters({ ...BASE, queries: ["a"] }).some(
+        (p) => p.Type === "CompetitionSearchParameter",
+      ),
+    ).toBe(false);
+  });
+
   test("maps location ids into location criteria", () => {
     const loc = buildSearchParameters({
       ...BASE,
@@ -51,14 +68,14 @@ describe("buildSearchParameters", () => {
       ...BASE,
       queries: ["a"],
       minSearchVolume: 100,
-      maxCompetition: 0.5,
+      competitionLevels: ["High"],
     });
     expect(filtered.find((p) => p.Type === "SearchVolumeSearchParameter")?.Minimum).toBe(
       100,
     );
-    expect(filtered.find((p) => p.Type === "CompetitionSearchParameter")?.Maximum).toBe(
-      0.5,
-    );
+    expect(
+      filtered.find((p) => p.Type === "CompetitionSearchParameter")?.CompetitionLevels,
+    ).toEqual(["High"]);
   });
 });
 

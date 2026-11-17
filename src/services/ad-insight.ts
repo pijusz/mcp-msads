@@ -14,6 +14,9 @@ import { MsAdsError } from "@/utils/errors";
  * returns stale volumes.
  */
 
+/** `CompetitionLevel` values for CompetitionSearchParameter. */
+export const COMPETITION_LEVELS = ["Low", "Medium", "High"] as const;
+
 /** Attributes `GetKeywordIdeas` can return. `Competition` is mandatory. */
 export const IDEA_ATTRIBUTES = [
   "Keyword",
@@ -44,9 +47,11 @@ export interface KeywordIdeasInput {
   /** Restrict to ideas within a search-volume band. */
   minSearchVolume?: number;
   maxSearchVolume?: number;
-  /** Restrict to a competition band, 0.0–1.0. */
-  minCompetition?: number;
-  maxCompetition?: number;
+  /**
+   * Restrict to competition bands. CompetitionSearchParameter takes only
+   * `CompetitionLevels` (Low / Medium / High) — there is no numeric range.
+   */
+  competitionLevels?: string[];
   /** Exclude terms already present in the account. */
   excludeAccountKeywords?: boolean;
 }
@@ -89,11 +94,10 @@ export function buildSearchParameters(
       ...(input.maxSearchVolume !== undefined ? { Maximum: input.maxSearchVolume } : {}),
     });
   }
-  if (input.minCompetition !== undefined || input.maxCompetition !== undefined) {
+  if (input.competitionLevels?.length) {
     params.push({
       Type: "CompetitionSearchParameter",
-      ...(input.minCompetition !== undefined ? { Minimum: input.minCompetition } : {}),
-      ...(input.maxCompetition !== undefined ? { Maximum: input.maxCompetition } : {}),
+      CompetitionLevels: input.competitionLevels,
     });
   }
   if (input.excludeAccountKeywords) {
