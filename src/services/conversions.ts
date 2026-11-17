@@ -89,24 +89,67 @@ export async function getUetTagAuthKey(ids: AccountIds, tagId: string): Promise<
 /* -------------------------- Conversion goals -------------------------- */
 
 /**
- * `Type` discriminators on the conversion goal OBJECT — what you send when
- * creating one.
+ * `Type` on the conversion goal object is the ConversionGoalType enum (`Url`,
+ * `Event`, …) — that is what reads return and what Microsoft's REST SDK
+ * (BingAds-Python-SDK `openapi_client`) sends on Add/Update. The REST
+ * AddConversionGoals template also shows the class name (`AppDownloadGoal`),
+ * which the SDK deserializer accepts too, so both spellings are accepted as
+ * input and normalized to the enum value on the wire.
  */
-export const CONVERSION_GOAL_TYPES = [
-  "UrlGoal",
-  "EventGoal",
-  "DurationGoal",
-  "PagesViewedPerVisitGoal",
-  "AppInstallGoal",
-  "AppDownloadGoal",
-  "OfflineConversionGoal",
-  "InStoreTransactionGoal",
+const GOAL_TYPE_ENUM = [
+  "Url",
+  "Event",
+  "Duration",
+  "PagesViewedPerVisit",
+  "AppInstall",
+  "AppDownload",
+  "OfflineConversion",
+  "InStoreTransaction",
 ] as const;
 
+export const CONVERSION_GOAL_TYPES = [
+  ...GOAL_TYPE_ENUM,
+  ...GOAL_TYPE_ENUM.map((t) => `${t}Goal` as `${typeof t}Goal`),
+] as const;
+
+/** `UrlGoal` → `Url`; enum values pass through unchanged. */
+export function normalizeConversionGoalType(type: unknown): unknown {
+  if (typeof type !== "string") return type;
+  const short = type.endsWith("Goal") ? type.slice(0, -"Goal".length) : type;
+  return (GOAL_TYPE_ENUM as readonly string[]).includes(short) ? short : type;
+}
+
 /**
- * A DIFFERENT enum, used only to filter reads — note the absent "Goal" suffix.
- * Passing the object discriminators here is rejected as invalid JSON rather
- * than as an unknown value, which makes the cause hard to see.
+ * Categories accepted on a goal. `GoalCategory` is required on Add (since June
+ * 2021); `None`/`Unknown` are read-only legacy values. Which categories a goal
+ * type supports varies — the API rejects an unsupported pairing per item.
+ */
+export const CONVERSION_GOAL_CATEGORIES = [
+  "Purchase",
+  "AddToCart",
+  "BeginCheckout",
+  "Subscribe",
+  "SubmitLeadForm",
+  "BookAppointment",
+  "Signup",
+  "RequestQuote",
+  "GetDirections",
+  "OutboundClick",
+  "Contact",
+  "PageView",
+  "Download",
+  "Other",
+] as const;
+
+function normalizeGoals(goals: Record<string, unknown>[]): Record<string, unknown>[] {
+  return goals.map((g) =>
+    "Type" in g ? { ...g, Type: normalizeConversionGoalType(g.Type) } : g,
+  );
+}
+
+/**
+ * The enum used to filter reads. It is the same ConversionGoalType enum, but
+ * passed as a comma-delimited flags string.
  *
  * `InStoreTransaction` is deliberately excluded from the default: it is
  * pilot-gated, and including it fails the whole call with
@@ -154,7 +197,7 @@ export async function addConversionGoals(
   const res = await msadsFetch<Record<string, unknown>>(
     "CampaignManagement",
     "ConversionGoals",
-    { method: "POST", body: { ConversionGoals: goals }, ...ids },
+    { method: "POST", body: { ConversionGoals: normalizeGoals(goals) }, ...ids },
   );
   return mapBatchResult(
     res,
@@ -172,7 +215,7 @@ export async function updateConversionGoals(
   const res = await msadsFetch<Record<string, unknown>>(
     "CampaignManagement",
     "ConversionGoals",
-    { method: "PUT", body: { ConversionGoals: goals }, ...ids },
+    { method: "PUT", body: { ConversionGoals: normalizeGoals(goals) }, ...ids },
   );
   return mapBatchResult(
     { ConversionGoalIds: goals.map((g) => g.Id ?? null), ...res },

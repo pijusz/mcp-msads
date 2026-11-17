@@ -372,6 +372,33 @@ describe("strict resource validation", () => {
   });
 });
 
+describe("conversion goal creation", () => {
+  test("requires GoalCategory and normalizes the goal Type", async () => {
+    mock.queue("/ConversionGoals", { json: { ConversionGoalIds: ["1"] } });
+    const goal = { Type: "UrlGoal", Name: "Buy", TagId: "9", UrlExpression: "/ok" };
+    await withClient(async (client) => {
+      const missing = await client.callTool({
+        name: "create_conversion_goals",
+        arguments: { account_id: "123", conversion_goals: [goal] },
+      });
+      expect(missing.isError).toBe(true);
+      expect(mock.callsTo("/ConversionGoals")).toHaveLength(0);
+
+      const result = await client.callTool({
+        name: "create_conversion_goals",
+        arguments: {
+          account_id: "123",
+          conversion_goals: [{ ...goal, GoalCategory: "Purchase" }],
+        },
+      });
+      expect(result.isError).toBeFalsy();
+    });
+    expect((mock.callsTo("/ConversionGoals")[0]!.body as any).ConversionGoals).toEqual([
+      { ...goal, Type: "Url", GoalCategory: "Purchase" },
+    ]);
+  });
+});
+
 describe("targeting parent scope", () => {
   test("list_targeting requires parent_id and sends it as the API parent id", async () => {
     mock.queue("AdGroupCriterions/QueryByIds", { json: { AdGroupCriterions: [] } });

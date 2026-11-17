@@ -84,7 +84,7 @@ export function registerConversionTools(server: McpServer): void {
         .array(z.enum(cv.CONVERSION_GOAL_FILTER_TYPES))
         .optional()
         .describe(
-          "Filter to certain goal types. Note these differ from the Type used when CREATING a goal — Url here, UrlGoal there. " +
+          "Filter to certain goal types (ConversionGoalType values: Url, Event, …). " +
             "InStoreTransaction is pilot-gated and excluded by default; passing it without the pilot fails the whole call.",
         ),
       limit: COLLECTION_LIMIT,
@@ -107,11 +107,13 @@ export function registerConversionTools(server: McpServer): void {
     "create_conversion_goals",
     `${WRITE}Create conversion goals.
 
-Each goal needs a Type and the TagId of the UET tag that feeds it:
-- UrlGoal: fires when a URL is visited — { "Type": "UrlGoal", "Name": "Purchase", "TagId": "123", "UrlExpression": "/thank-you", "UrlOperator": "Contains" }
-- EventGoal: fires on a custom UET event
-- DurationGoal / PagesViewedPerVisitGoal: engagement goals
-- OfflineConversionGoal: for conversions uploaded via upload_offline_conversions
+Each goal needs a Type, a GoalCategory (required by the API), and the TagId of the UET tag that feeds it:
+- Url: fires when a URL is visited — { "Type": "Url", "Name": "Purchase", "GoalCategory": "Purchase", "TagId": "123", "UrlExpression": "/thank-you", "UrlOperator": "Contains" }
+- Event: fires on a custom UET event
+- Duration / PagesViewedPerVisit: engagement goals
+- OfflineConversion: for conversions uploaded via upload_offline_conversions
+
+Type uses the ConversionGoalType values (Url, Event, …); the class names (UrlGoal, EventGoal, …) are accepted too and normalized. Supported GoalCategory values vary by goal type.
 
 Scope is immutable after creation. An OfflineConversionGoal needs about 2 hours before it will accept uploaded conversions.`,
     {
@@ -122,6 +124,9 @@ Scope is immutable after creation. An OfflineConversionGoal needs about 2 hours 
             .object({
               Type: z.enum(cv.CONVERSION_GOAL_TYPES),
               Name: z.string().max(100),
+              GoalCategory: z
+                .enum(cv.CONVERSION_GOAL_CATEGORIES)
+                .describe("Required on create. Supported values vary by goal Type."),
               TagId: z.string().optional().describe("UET tag id feeding this goal."),
               Scope: z
                 .enum(["Account", "Customer"])

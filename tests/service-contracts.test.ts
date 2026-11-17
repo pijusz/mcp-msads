@@ -585,9 +585,11 @@ describe("dedicated service request contracts", () => {
     await getUetTags(IDS, ["7000000000000001"]);
     const tags = await addUetTags(IDS, [{ Name: "Good" }, { Name: "Bad" }]);
     await getConversionGoals(IDS, ["7100000000000001"], ["Url", "OfflineConversion"]);
-    await addConversionGoals(IDS, [{ Name: "Lead", Type: "OfflineConversionGoal" }]);
+    await addConversionGoals(IDS, [
+      { Name: "Lead", Type: "OfflineConversionGoal", GoalCategory: "SubmitLeadForm" },
+    ]);
     await updateConversionGoals(IDS, [
-      { Id: "7100000000000001", Name: "Lead 2", Type: "OfflineConversionGoal" },
+      { Id: "7100000000000001", Name: "Lead 2", Type: "OfflineConversion" },
     ]);
     const time = new Date(Date.now() - 3_600_000).toISOString();
     const applied = await applyOfflineConversions(IDS, [
@@ -612,6 +614,18 @@ describe("dedicated service request contracts", () => {
       ReturnAdditionalFields:
         "ViewThroughConversionWindowInMinutes,IsExternallyAttributed",
     });
+    // Goal Type is the ConversionGoalType enum on the wire, as the REST SDK
+    // sends it; the class-name spelling is normalized.
+    const goalWrites = mock.calls.filter((call) =>
+      new URL(call.url).pathname.endsWith("/CampaignManagement/v13/ConversionGoals"),
+    );
+    expect(goalWrites.map((call) => call.method)).toEqual(["POST", "PUT"]);
+    expect((goalWrites[0]!.body as any).ConversionGoals).toEqual([
+      { Name: "Lead", Type: "OfflineConversion", GoalCategory: "SubmitLeadForm" },
+    ]);
+    expect((goalWrites[1]!.body as any).ConversionGoals[0].Type).toBe(
+      "OfflineConversion",
+    );
     const upload = callEnding("/CampaignManagement/v13/OfflineConversions/Apply");
     expect(JSON.stringify(upload.body)).not.toContain("person@example.com");
     expect((upload.body as any).OfflineConversions[0].HashedEmailAddress).toMatch(
