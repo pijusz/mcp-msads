@@ -182,6 +182,7 @@ describe("malformed archive handling", () => {
     const archive = zipSync([{ name: "a.csv", data: "x".repeat(20_000) }]);
     const cd = archive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
     archive.writeUInt32LE(8, cd + 24); // claim 8 uncompressed bytes
-    expect(() => unzip(archive)).toThrow();
+    expect(() => unzip(archive)).toThrow(ZipError);
+    expect(() => unzip(archive)).toThrow(/inflates past its declared 8 bytes/);
   });
 });

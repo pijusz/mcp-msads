@@ -158,7 +158,18 @@ function decompress(
   } else if (method === METHOD_DEFLATE) {
     // Bounded by the declared size: a corrupt or hostile archive could
     // otherwise inflate to gigabytes before the size check below ever runs.
-    out = inflateRawSync(payload, { maxOutputLength: Math.max(expectedSize, 1) });
+    try {
+      out = inflateRawSync(payload, { maxOutputLength: Math.max(expectedSize, 1) });
+    } catch (error) {
+      // Exceeding maxOutputLength raises a RangeError (ERR_BUFFER_TOO_LARGE);
+      // malformed deflate data raises a zlib Error. Both mean a bad archive.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new ZipError(
+        error instanceof RangeError
+          ? `ZIP entry "${name}" inflates past its declared ${expectedSize} bytes. The archive is corrupt or hostile; fetch it again.`
+          : `ZIP entry "${name}" could not be inflated: ${reason}`,
+      );
+    }
   } else {
     throw new ZipError(
       `ZIP entry "${name}" uses unsupported compression method ${method}${
