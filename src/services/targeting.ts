@@ -157,11 +157,13 @@ function paths(level: CriterionLevel) {
         collection: "CampaignCriterions",
         body: "CampaignCriterions",
         ids: "CampaignCriterionIds",
+        parent: "CampaignId",
       }
     : {
         collection: "AdGroupCriterions",
         body: "AdGroupCriterions",
         ids: "AdGroupCriterionIds",
+        parent: "AdGroupId",
       };
 }
 
@@ -171,9 +173,17 @@ function limitFor(level: CriterionLevel): number {
     : BATCH_LIMITS.adGroupCriterions;
 }
 
+/**
+ * Read criterions of one campaign or ad group.
+ *
+ * `CampaignId` / `AdGroupId` is a required request element of
+ * GetCampaignCriterionsByIds / GetAdGroupCriterionsByIds; with null ids the
+ * API returns every criterion of that type under the parent.
+ */
 export async function getCriterions(
   ids: AccountIds,
   level: CriterionLevel,
+  parentId: string,
   criterionIds: string[] | null,
   criterionType: string,
 ): Promise<Record<string, unknown>[]> {
@@ -183,8 +193,8 @@ export async function getCriterions(
     `${p.collection}/QueryByIds`,
     {
       body: {
-        [level === "campaign" ? "CampaignCriterionIds" : "AdGroupCriterionIds"]:
-          criterionIds,
+        [p.ids]: criterionIds,
+        [p.parent]: parentId,
         CriterionType: criterionType,
       },
       ...ids,
@@ -251,6 +261,7 @@ export async function updateCriterions(
 export async function deleteCriterions(
   ids: AccountIds,
   level: CriterionLevel,
+  parentId: string,
   criterionIds: string[],
   criterionType: string,
 ): Promise<BatchResult> {
@@ -264,8 +275,8 @@ export async function deleteCriterions(
     {
       method: "DELETE",
       body: {
-        [level === "campaign" ? "CampaignCriterionIds" : "AdGroupCriterionIds"]:
-          criterionIds,
+        [p.ids]: criterionIds,
+        [p.parent]: parentId,
         CriterionType: writeFamily,
       },
       ...ids,

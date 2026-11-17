@@ -179,20 +179,37 @@ describe("targeting and audience mutation contracts", () => {
     mock.queue("/CampaignCriterions", ...cases.map(() => ({ json: {} })));
 
     for (const [specific, family] of cases) {
-      await deleteCriterions(IDS, "campaign", ["9007199254740993"], specific);
+      await deleteCriterions(
+        IDS,
+        "campaign",
+        "9007199254740995",
+        ["9007199254740993"],
+        specific,
+      );
       const call = mock.callsTo("/CampaignCriterions").at(-1)!;
       expect(call.method).toBe("DELETE");
       expect(call.body).toEqual({
         CampaignCriterionIds: ["9007199254740993"],
+        CampaignId: "9007199254740995",
         CriterionType: family,
       });
     }
   });
 
+  test("ad group targeting delete carries its required AdGroupId", async () => {
+    mock.queue("/AdGroupCriterions", { json: {} });
+    await deleteCriterions(IDS, "adgroup", "9007199254740997", ["11"], "Device");
+    expect(mock.callsTo("/AdGroupCriterions").at(-1)?.body).toEqual({
+      AdGroupCriterionIds: ["11"],
+      AdGroupId: "9007199254740997",
+      CriterionType: "Targets",
+    });
+  });
+
   test("rejects an unreviewed targeting delete type locally", async () => {
-    await expect(deleteCriterions(IDS, "adgroup", ["1"], "Telepathy")).rejects.toThrow(
-      /Unsupported criterion type/,
-    );
+    await expect(
+      deleteCriterions(IDS, "adgroup", "2", ["1"], "Telepathy"),
+    ).rejects.toThrow(/Unsupported criterion type/);
     expect(mock.callsTo("/AdGroupCriterions")).toHaveLength(0);
   });
 

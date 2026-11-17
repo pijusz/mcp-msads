@@ -453,7 +453,7 @@ describe("dedicated service request contracts", () => {
       Id: "5400000000000001",
       Criterion: { Type: "AgeCriterion", AgeRange: "EighteenToTwentyFour" },
     };
-    await getCriterions(IDS, "campaign", ["5400000000000001"], "Age");
+    await getCriterions(IDS, "campaign", "8000000000000001", ["5400000000000001"], "Age");
     await addCriterions(IDS, "campaign", [criterion]);
     await updateCriterions(IDS, "campaign", [criterion]);
     await getProfileDataFileUrl(IDS, "Industry", "en");
@@ -531,6 +531,7 @@ describe("dedicated service request contracts", () => {
       callEnding("/CampaignManagement/v13/CampaignCriterions/QueryByIds").body,
     ).toEqual({
       CampaignCriterionIds: ["5400000000000001"],
+      CampaignId: "8000000000000001",
       CriterionType: "Age",
     });
     const criterionWrites = mock.calls.filter((call) =>

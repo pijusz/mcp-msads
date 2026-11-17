@@ -16,6 +16,13 @@ const LEVEL = z
   .enum(["campaign", "adgroup"])
   .describe("Which level the criterions belong to.");
 
+const PARENT_ID = z
+  .string()
+  .min(1)
+  .describe(
+    "The campaign id (level=campaign) or ad group id (level=adgroup) that owns the criterions. Required by the API.",
+  );
+
 const CRITERION_EXAMPLES = `Criterion shapes (the nested Criterion object carries its own Type):
 - Age:      { "Criterion": { "Type": "AgeCriterion", "AgeRange": "TwentyFiveToThirtyFour" } }
 - Gender:   { "Criterion": { "Type": "GenderCriterion", "GenderType": "Female" } }
@@ -38,6 +45,7 @@ export function registerTargetingTools(server: McpServer): void {
     inputSchema: {
       ...ACCOUNT_ARGS,
       level: LEVEL,
+      parent_id: PARENT_ID,
       criterion_type: z
         .string()
         .describe(
@@ -47,7 +55,7 @@ export function registerTargetingTools(server: McpServer): void {
         .array(z.string())
         .max(MAX_COLLECTION_LIMIT)
         .optional()
-        .describe("Specific ids; omit for all."),
+        .describe("Specific ids; omit for every criterion of this type under parent_id."),
       limit: COLLECTION_LIMIT,
     },
     handler: async (args) => {
@@ -55,6 +63,7 @@ export function registerTargetingTools(server: McpServer): void {
       const criterions = await tg.getCriterions(
         scope,
         args.level as tg.CriterionLevel,
+        String(args.parent_id),
         Array.isArray(args.criterion_ids) ? args.criterion_ids.map(String) : null,
         String(args.criterion_type),
       );
@@ -144,6 +153,7 @@ Day/time criterion fields are immutable; delete and re-add to change a schedule.
     {
       ...ACCOUNT_ARGS,
       level: LEVEL,
+      parent_id: PARENT_ID,
       criterion_ids: z.array(z.string()).min(1),
       criterion_type: z
         .enum(tg.DELETE_CRITERION_TYPES)
@@ -156,6 +166,7 @@ Day/time criterion fields are immutable; delete and re-add to change a schedule.
       return tg.deleteCriterions(
         scope,
         args.level as tg.CriterionLevel,
+        String(args.parent_id),
         (args.criterion_ids as string[]).map(String),
         String(args.criterion_type),
       );

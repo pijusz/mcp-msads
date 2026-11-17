@@ -371,3 +371,33 @@ describe("strict resource validation", () => {
     expect(mock.calls).toHaveLength(0);
   });
 });
+
+describe("targeting parent scope", () => {
+  test("list_targeting requires parent_id and sends it as the API parent id", async () => {
+    mock.queue("AdGroupCriterions/QueryByIds", { json: { AdGroupCriterions: [] } });
+    await withClient(async (client) => {
+      const missing = await client.callTool({
+        name: "list_targeting",
+        arguments: { account_id: "123", level: "adgroup", criterion_type: "Age" },
+      });
+      expect(missing.isError).toBe(true);
+      expect(mock.callsTo("AdGroupCriterions/QueryByIds")).toHaveLength(0);
+
+      const result = await client.callTool({
+        name: "list_targeting",
+        arguments: {
+          account_id: "123",
+          level: "adgroup",
+          parent_id: "9007199254740993",
+          criterion_type: "Age",
+        },
+      });
+      expect(result.isError).toBeFalsy();
+    });
+    expect(mock.callsTo("AdGroupCriterions/QueryByIds")[0]?.body).toEqual({
+      AdGroupCriterionIds: null,
+      AdGroupId: "9007199254740993",
+      CriterionType: "Age",
+    });
+  });
+});
