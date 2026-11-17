@@ -200,6 +200,32 @@ async function readBody(res: Response): Promise<unknown> {
 }
 
 /**
+ * Parse a 2xx body. An empty body is a legitimate `{}` (several deletes return
+ * nothing), but a non-empty body that is not JSON must not masquerade as an
+ * empty success — a write would look as if it had no partial errors.
+ */
+async function readSuccessBody(
+  res: Response,
+  service: ServiceName,
+  path: string,
+): Promise<unknown> {
+  const bytes = await readResponseBytes(res, MAX_API_RESPONSE_BYTES);
+  const text = new TextDecoder().decode(bytes);
+  if (text.trim() === "") return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new MsAdsError({
+      status: res.status,
+      message:
+        `${service} ${path} returned HTTP ${res.status} with a body that is not valid JSON ` +
+        `(${bytes.byteLength} bytes, content-type "${res.headers.get("content-type") ?? "none"}"). ` +
+        "The outcome of the operation is unknown; check the entities before retrying a write.",
+    });
+  }
+}
+
+/**
  * Call a Microsoft Advertising REST operation.
  *
  * Handles, in order: token refresh on 109, retry with backoff on throttling and
@@ -228,11 +254,16 @@ export async function msadsFetch<T>(
   let lastError: MsAdsError | undefined;
 
   for (let attempt = 0; attempt <= retryBudget; attempt++) {
+    // Built before the timer is armed and outside the network-error handler:
+    // a token refresh has its own timeout, and an auth failure (invalid_grant,
+    // missing developer token) is not transient — it must surface unchanged,
+    // with its needs_reconsent / fix hints, rather than be retried as a
+    // "network error".
+    const headers = await buildHeaders(service, opts);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
 
     try {
-      const headers = await buildHeaders(service, opts);
       const init: RequestInit = { method, headers, signal: controller.signal };
       if (body !== undefined) init.body = JSON.stringify(body);
 
@@ -241,8 +272,7 @@ export async function msadsFetch<T>(
       // the HEADERS arrive; a server that then stalls mid-body would hang
       // forever with the abort already disarmed. It is cleared in `finally`.
       if (res.ok) {
-        const parsed = await readBody(res);
-        return (parsed ?? {}) as T;
+        return (await readSuccessBody(res, service, path)) as T;
       }
 
       const err = parseApiError(res.status, await readBody(res));

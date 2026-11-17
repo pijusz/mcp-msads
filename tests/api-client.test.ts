@@ -8,7 +8,8 @@ import {
   retryDelayMs,
   serviceBaseUrl,
 } from "@/services/msads-api";
-import { ErrorCode, MsAdsError } from "@/utils/errors";
+import { ErrorCode, MsAdsAuthError, MsAdsError } from "@/utils/errors";
+import { errorPayload } from "@/utils/tool-response";
 import { installMockFetch, type MockFetch, setTestEnv, tokenResponse } from "./_mock";
 
 let mock: MockFetch;
@@ -117,6 +118,49 @@ describe("buildHeaders", () => {
 });
 
 describe("msadsFetch", () => {
+  test("invalid_grant makes one token POST and surfaces the auth error unchanged", async () => {
+    mock.restore();
+    mock = installMockFetch();
+    mock.queue("login.microsoftonline.com", {
+      status: 400,
+      json: { error: "invalid_grant", error_description: "AADSTS70000: grant expired" },
+    });
+    let caught: unknown;
+    try {
+      await msadsFetch("CampaignManagement", "Campaigns/QueryByAccountId", {
+        body: {},
+        retry: "safe",
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(MsAdsAuthError);
+    expect(mock.callsTo("login.microsoftonline.com")).toHaveLength(1);
+    expect(mock.callsTo("CampaignManagement")).toHaveLength(0);
+    expect(errorPayload(caught).error).toMatchObject({
+      oauth_error: "invalid_grant",
+      needs_reconsent: true,
+      fix: expect.stringContaining("setup"),
+    });
+  });
+
+  test("an empty 2xx body is an empty object", async () => {
+    mock.queue("CampaignManagement", { text: "" });
+    expect(
+      await msadsFetch("CampaignManagement", "Campaigns", { method: "DELETE" }),
+    ).toEqual({});
+  });
+
+  test("a non-empty 2xx body that is not JSON is an error, not an empty success", async () => {
+    mock.queue("CampaignManagement", {
+      text: "<html>gateway</html>",
+      headers: { "content-type": "application/json" },
+    });
+    await expect(
+      msadsFetch("CampaignManagement", "Campaigns", { method: "POST", body: {} }),
+    ).rejects.toThrow(/not valid JSON/);
+  });
+
   test("POSTs JSON and returns the parsed body", async () => {
     mock.queue("CampaignManagement", { json: { CampaignIds: ["1"] } });
     const res = await msadsFetch<{ CampaignIds: string[] }>(
