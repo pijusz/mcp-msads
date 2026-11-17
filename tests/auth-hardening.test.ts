@@ -21,6 +21,7 @@ import {
   requestToken,
   resetAuthForTesting,
   type TokenFile,
+  tokenLockWaitMs,
   writeTokenFile,
 } from "@/auth/oauth";
 import { recoveryPathFor, withFileLock } from "@/auth/secure-file";
@@ -108,6 +109,15 @@ describe("secure token files", () => {
 });
 
 describe("refresh locking", () => {
+  test("waits longer than a token refresh can take", () => {
+    setTestEnv({ MSADS_REQUEST_TIMEOUT_MS: "60000" });
+    resetEnvForTesting();
+    expect(tokenLockWaitMs()).toBeGreaterThan(60_000);
+    setTestEnv({ MSADS_REQUEST_TIMEOUT_MS: "120000" });
+    resetEnvForTesting();
+    expect(tokenLockWaitMs()).toBeGreaterThan(120_000);
+  });
+
   test("serializes processes and re-reads a token rotated by the first owner", async () => {
     const directory = temporaryDirectory();
     const path = join(directory, "token.json");

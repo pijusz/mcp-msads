@@ -17,7 +17,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const FILE_MODE = 0o600;
-const LOCK_WAIT_MS = 5_000;
+/**
+ * Default lock wait. The holder may be mid token refresh, which can take up to
+ * the request timeout (60s default), so the wait must outlast that.
+ */
+const LOCK_WAIT_MS = 75_000;
 const LOCK_POLL_MS = 50;
 const LOCK_HOST = "127.0.0.1";
 const FIRST_DYNAMIC_PORT = 49_152;

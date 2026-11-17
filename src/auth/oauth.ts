@@ -260,18 +260,34 @@ async function refreshWithToken(refreshToken: string): Promise<TokenSet> {
   return tokens;
 }
 
+/** Margin on top of the request timeout when waiting for another refresher. */
+const LOCK_WAIT_MARGIN_MS = 15_000;
+
+/**
+ * How long to wait for another process's token refresh. The lock holder can
+ * spend up to MSADS_REQUEST_TIMEOUT_MS on the token POST, so a shorter wait
+ * fails a perfectly healthy concurrent refresh.
+ */
+export function tokenLockWaitMs(): number {
+  return getEnv().MSADS_REQUEST_TIMEOUT_MS + LOCK_WAIT_MARGIN_MS;
+}
+
 /** Trade the refresh token for a fresh access token (and a rotated refresh token). */
 export async function refreshAccessToken(): Promise<TokenSet> {
   const env = getEnv();
   const tokenPath = env.MSADS_TOKEN_FILE;
   if (!tokenPath) return refreshWithToken(getRefreshToken());
 
-  return withFileLock(tokenPath, async () => {
-    // Another process may have rotated while this process waited for the lock.
-    const refreshToken = readTokenFile(tokenPath)?.refresh_token ?? getRefreshToken();
-    currentRefreshToken = refreshToken;
-    return refreshWithToken(refreshToken);
-  });
+  return withFileLock(
+    tokenPath,
+    async () => {
+      // Another process may have rotated while this process waited for the lock.
+      const refreshToken = readTokenFile(tokenPath)?.refresh_token ?? getRefreshToken();
+      currentRefreshToken = refreshToken;
+      return refreshWithToken(refreshToken);
+    },
+    { waitMs: tokenLockWaitMs() },
+  );
 }
 
 function isFresh(tokens: TokenSet | null): tokens is TokenSet {
