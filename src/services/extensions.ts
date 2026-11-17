@@ -311,6 +311,9 @@ export async function getNegativeKeywords(
   return res.EntityNegativeKeywords ?? [];
 }
 
+/** Negative keywords accept only these; Broad is not a negative match type. */
+export const NEGATIVE_MATCH_TYPES = ["Exact", "Phrase"] as const;
+
 export async function addNegativeKeywords(
   ids: AccountIds,
   entityId: string,
@@ -318,6 +321,13 @@ export async function addNegativeKeywords(
   keywords: Array<{ Text: string; MatchType: string }>,
 ): Promise<BatchResult> {
   assertBatchLimit(keywords, NEGATIVE_KEYWORD_LIMIT, "negative keywords");
+  for (const k of keywords) {
+    if (!(NEGATIVE_MATCH_TYPES as readonly string[]).includes(k.MatchType)) {
+      throw new MsAdsError({
+        message: `Invalid negative keyword match type "${k.MatchType}" for "${k.Text}". Negative keywords support only ${NEGATIVE_MATCH_TYPES.join(" and ")}.`,
+      });
+    }
+  }
   const res = await msadsFetch<Record<string, unknown>>(
     "CampaignManagement",
     "EntityNegativeKeywords",
@@ -325,7 +335,12 @@ export async function addNegativeKeywords(
       method: "POST",
       body: {
         EntityNegativeKeywords: [
-          { EntityId: entityId, EntityType: entityType, NegativeKeywords: keywords },
+          {
+            EntityId: entityId,
+            EntityType: entityType,
+            // NegativeKeyword derives from SharedListItem: REST needs the discriminator.
+            NegativeKeywords: keywords.map((k) => ({ Type: "NegativeKeyword", ...k })),
+          },
         ],
       },
       ...ids,
@@ -363,7 +378,10 @@ export async function deleteNegativeKeywords(
           {
             EntityId: entityId,
             EntityType: entityType,
-            NegativeKeywords: keywordIds.map((id) => ({ Id: id })),
+            NegativeKeywords: keywordIds.map((id) => ({
+              Type: "NegativeKeyword",
+              Id: id,
+            })),
           },
         ],
       },

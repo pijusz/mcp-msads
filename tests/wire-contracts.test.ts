@@ -6,6 +6,7 @@ import { updateAudiences } from "@/services/audiences";
 import { getBillingDocumentsInfo, toBillingDateTime } from "@/services/billing";
 import {
   AD_EXTENSION_TYPES,
+  addNegativeKeywords,
   getAdExtensionAssociations,
   getNegativeKeywords,
   setAdExtensionAssociations,
@@ -204,6 +205,13 @@ describe("targeting and audience mutation contracts", () => {
       AdGroupId: "9007199254740997",
       CriterionType: "Targets",
     });
+  });
+
+  test("refuses broad-match negative keywords before any request", async () => {
+    await expect(
+      addNegativeKeywords(IDS, "1", "Campaign", [{ Text: "free", MatchType: "Broad" }]),
+    ).rejects.toThrow(/only Exact and Phrase/);
+    expect(mock.callsTo("/EntityNegativeKeywords")).toHaveLength(0);
   });
 
   test("rejects an unreviewed targeting delete type locally", async () => {

@@ -517,7 +517,18 @@ describe("dedicated service request contracts", () => {
         {
           EntityId: "8000000000000001",
           EntityType: "Campaign",
-          NegativeKeywords: [{ Text: "free", MatchType: "Phrase" }],
+          NegativeKeywords: [
+            { Type: "NegativeKeyword", Text: "free", MatchType: "Phrase" },
+          ],
+        },
+      ],
+    });
+    expect(negativeWrites[1]?.body).toEqual({
+      EntityNegativeKeywords: [
+        {
+          EntityId: "8000000000000001",
+          EntityType: "Campaign",
+          NegativeKeywords: [{ Type: "NegativeKeyword", Id: "5200000000000001" }],
         },
       ],
     });

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as ext from "@/services/extensions";
-import { AD_EXTENSION_UPDATE_WARNING, MATCH_TYPES } from "@/services/guardrails";
+import { AD_EXTENSION_UPDATE_WARNING } from "@/services/guardrails";
 import { ACCOUNT_ARGS, ids, WRITE } from "@/tools/_shared";
 import { BATCH_LIMITS } from "@/utils/batch";
 import {
@@ -388,7 +388,7 @@ Each association pairs a label with an entity: [{ "LabelId": "1", "EntityId": "9
     "add_negative_keywords",
     `${WRITE}Add negative keywords to one campaign or ad group, stopping ads from showing on those searches.
 
-Match types are Broad, Phrase, and Exact. A phrase negative usually covers a whole cluster of unwanted searches where individual exact negatives would not.
+Negative match types are Phrase and Exact only — there is no broad negative. A phrase negative usually covers a whole cluster of unwanted searches where individual exact negatives would not.
 
 Limits: up to ${ext.NEGATIVE_KEYWORD_LIMIT} per entity. Campaign-level negatives apply to every ad group beneath.`,
     {
@@ -399,7 +399,7 @@ Limits: up to ${ext.NEGATIVE_KEYWORD_LIMIT} per entity. Campaign-level negatives
         .array(
           z.object({
             Text: z.string().max(100),
-            MatchType: z.enum(MATCH_TYPES),
+            MatchType: z.enum(ext.NEGATIVE_MATCH_TYPES),
           }),
         )
         .min(1)
