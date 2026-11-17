@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { tokenPersistenceWarning } from "@/auth/oauth";
 import { runSetup } from "@/auth/setup";
 import { allowCwdDotEnv, loadEnv, shouldValidateAtStartup } from "@/config/env";
 import { createServer } from "@/server";
@@ -52,6 +53,8 @@ async function runStartupPreflight(): Promise<void> {
         "No credentials configured. Run `mcp-msads setup` to authorize, then set MSADS_TOKEN_FILE (preferred, persists rotations) or MSADS_REFRESH_TOKEN.",
       );
     }
+    const persistence = tokenPersistenceWarning(env);
+    if (persistence) log.warn(persistence);
     if (shouldValidateAtStartup()) {
       await getUser();
       log.info("Credentials valid.");

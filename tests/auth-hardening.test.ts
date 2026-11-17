@@ -22,6 +22,7 @@ import {
   resetAuthForTesting,
   type TokenFile,
   tokenLockWaitMs,
+  tokenPersistenceWarning,
   writeTokenFile,
 } from "@/auth/oauth";
 import { recoveryPathFor, withFileLock } from "@/auth/secure-file";
@@ -110,6 +111,19 @@ describe("secure token files", () => {
     if (process.platform !== "win32") {
       expect(statSync(recovery).mode & 0o777).toBe(0o600);
     }
+  });
+});
+
+describe("token persistence warning", () => {
+  test("recommends MSADS_TOKEN_FILE only when rotations would be memory-only", () => {
+    expect(tokenPersistenceWarning({ MSADS_REFRESH_TOKEN: "r" })).toMatch(
+      /MSADS_TOKEN_FILE/,
+    );
+    expect(
+      tokenPersistenceWarning({ MSADS_REFRESH_TOKEN: "r", MSADS_TOKEN_FILE: "/t.json" }),
+    ).toBeNull();
+    expect(tokenPersistenceWarning({ MSADS_TOKEN_FILE: "/t.json" })).toBeNull();
+    expect(tokenPersistenceWarning({})).toBeNull();
   });
 });
 

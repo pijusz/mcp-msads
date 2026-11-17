@@ -134,6 +134,24 @@ export function getRefreshToken(): string {
 }
 
 /**
+ * Startup advice when rotated refresh tokens cannot be persisted.
+ *
+ * With only MSADS_REFRESH_TOKEN, each rotation lives in memory and is lost on
+ * restart; the original token keeps aging toward its idle expiry. Defaults
+ * are unchanged — this only says so, once, on stderr.
+ */
+export function tokenPersistenceWarning(env: {
+  MSADS_REFRESH_TOKEN?: string;
+  MSADS_TOKEN_FILE?: string;
+}): string | null {
+  if (!env.MSADS_REFRESH_TOKEN || env.MSADS_TOKEN_FILE) return null;
+  return (
+    "MSADS_TOKEN_FILE is not set, so rotated refresh tokens are kept in memory only and lost on restart. " +
+    "Point MSADS_TOKEN_FILE at the file `mcp-msads setup` wrote so rotations persist."
+  );
+}
+
+/**
  * Persist a rotated refresh token. Entra returns a new one on every refresh
  * and expects the old one to be discarded, so losing this write means the
  * 90-day idle clock keeps running against a token we no longer use.
