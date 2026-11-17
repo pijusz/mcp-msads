@@ -372,6 +372,47 @@ describe("strict resource validation", () => {
   });
 });
 
+describe("campaign and ad group updates", () => {
+  test("convert ISO dates to date objects and normalize the bid strategy", async () => {
+    mock.queue("/Campaigns", { json: {} });
+    mock.queue("/AdGroups", { json: {} });
+    await withClient(async (client) => {
+      const campaigns = await client.callTool({
+        name: "update_campaigns",
+        arguments: {
+          account_id: "123",
+          campaigns: [
+            {
+              Id: "1",
+              EndDate: "2026-12-31",
+              BiddingScheme: { Type: "MaxConversionsBiddingScheme", TargetCpa: 25 },
+            },
+          ],
+        },
+      });
+      expect(campaigns.isError).toBeFalsy();
+      const adGroups = await client.callTool({
+        name: "update_ad_groups",
+        arguments: {
+          account_id: "123",
+          campaign_id: "1",
+          ad_groups: [{ Id: "2", StartDate: "2026-08-01" }],
+        },
+      });
+      expect(adGroups.isError).toBeFalsy();
+    });
+    expect((mock.callsTo("/Campaigns")[0]!.body as any).Campaigns[0]).toEqual({
+      Id: "1",
+      EndDate: { Year: 2026, Month: 12, Day: 31 },
+      BiddingScheme: { Type: "MaxConversions", TargetCpa: 25 },
+    });
+    expect((mock.callsTo("/AdGroups")[0]!.body as any).AdGroups[0]).toEqual({
+      Id: "2",
+      StartDate: { Year: 2026, Month: 8, Day: 1 },
+    });
+  });
+});
+
 describe("conversion goal creation", () => {
   test("requires GoalCategory and normalizes the goal Type", async () => {
     mock.queue("/ConversionGoals", { json: { ConversionGoalIds: ["1"] } });

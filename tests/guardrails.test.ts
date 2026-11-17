@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  normalizeBiddingScheme,
   rejectChildBidStrategy,
   validateBidStrategy,
   validateCampaignType,
@@ -24,6 +25,34 @@ describe("validateBidStrategy", () => {
     expect(() => validateBidStrategy({ Type: "TargetRoasBiddingScheme" })).toThrow(
       /MaxConversionValueBiddingScheme/,
     );
+  });
+
+  test("rejects removed strategies in the short form too", () => {
+    expect(() => validateBidStrategy({ Type: "TargetCpa" })).toThrow(
+      /MaxConversionsBiddingScheme/,
+    );
+    expect(() => validateBidStrategy({ Type: "TargetRoas" })).toThrow(
+      /MaxConversionValueBiddingScheme/,
+    );
+    expect(() => normalizeBiddingScheme({ Type: "TargetCpa" })).toThrow(/2025-08-04/);
+  });
+
+  test("accepts both spellings and sends the REST SDK's wire value", () => {
+    for (const type of ["MaxConversionsBiddingScheme", "MaxConversions"]) {
+      expect(normalizeBiddingScheme({ Type: type, TargetCpa: 25 })).toEqual({
+        Type: "MaxConversions",
+        TargetCpa: 25,
+      });
+    }
+    for (const type of ["MaxConversionValueBiddingScheme", "MaxConversionValue"]) {
+      expect(normalizeBiddingScheme({ Type: type })).toEqual({
+        Type: "MaxConversionValueBiddingScheme",
+      });
+    }
+    expect(normalizeBiddingScheme({ Type: "ManualCpcBiddingScheme" })).toEqual({
+      Type: "ManualCpc",
+    });
+    expect(normalizeBiddingScheme(undefined)).toBeUndefined();
   });
 
   test("names the valid options for an unknown strategy", () => {

@@ -6,8 +6,8 @@ import {
   BID_STRATEGIES,
   CAMPAIGN_TYPES,
   MATCH_TYPES,
+  normalizeBiddingScheme,
   rejectChildBidStrategy,
-  validateBidStrategy,
   validateCampaignType,
   validateMatchType,
 } from "@/services/guardrails";
@@ -69,6 +69,13 @@ function isoDates(entity: Record<string, unknown>): Record<string, unknown> {
     if (typeof value === "string" && value !== "") out[field] = toMsDate(value);
   }
   return out;
+}
+
+/** `{ BiddingScheme }` with its Type normalized, or nothing when absent. */
+function biddingScheme(entity: Record<string, unknown>): Record<string, unknown> {
+  return entity.BiddingScheme === undefined
+    ? {}
+    : { BiddingScheme: normalizeBiddingScheme(entity.BiddingScheme) };
 }
 
 export function registerCampaignTools(server: McpServer): void {
@@ -148,8 +155,7 @@ export function registerCampaignTools(server: McpServer): void {
     uriTemplate: "msads://adgroup/{adGroupId}/ads",
     uriVars: { adGroupId: "ad_group_id" },
     priority: 0.85,
-    description:
-      "List the ads in an ad group. Optionally filter by ad type (ResponsiveSearchAd, ExpandedTextAd, ResponsiveAd, ProductAd, DynamicSearchAd, AppInstallAd, HotelAd, TextAd).",
+    description: `List the ads in an ad group. Optionally filter by ad type: ${cm.AD_TYPES.join(", ")} (no "Ad" suffix, except ResponsiveAd).`,
     inputSchema: {
       ...ACCOUNT_ARGS,
       ad_group_id: z.string().describe("Ad group id."),
@@ -274,7 +280,7 @@ Notes that prevent silent misconfiguration:
                 .passthrough()
                 .optional()
                 .describe(
-                  'e.g. { "Type": "MaxConversionsBiddingScheme", "TargetCpa": 25 }',
+                  'e.g. { "Type": "MaxConversionsBiddingScheme", "TargetCpa": 25 }. The short form ("MaxConversions") is accepted too. TargetCpa/TargetRoas schemes are refused: the API silently converts them.',
                 ),
               Languages: z
                 .array(z.string())
@@ -298,10 +304,9 @@ Notes that prevent silent misconfiguration:
       const scope = await ids(args);
       const campaigns = (args.campaigns as Record<string, unknown>[]).map((c) => {
         validateCampaignType(c.CampaignType);
-        validateBidStrategy(c.BiddingScheme);
         // Defaulting to Paused: creating live spend without being asked to is
         // not a reasonable default for an agent-driven call.
-        return { Status: "Paused", ...c, ...isoDates(c) };
+        return { Status: "Paused", ...c, ...isoDates(c), ...biddingScheme(c) };
       });
       return cm.addCampaigns(scope, campaigns);
     }),
@@ -338,8 +343,11 @@ Use this to pause or resume (Status), change budgets, or switch bid strategy. Ch
     },
     run(async (args: Record<string, unknown>) => {
       const scope = await ids(args);
-      const campaigns = args.campaigns as Record<string, unknown>[];
-      for (const c of campaigns) validateBidStrategy(c.BiddingScheme);
+      const campaigns = (args.campaigns as Record<string, unknown>[]).map((c) => ({
+        ...c,
+        ...isoDates(c),
+        ...biddingScheme(c),
+      }));
       return cm.updateCampaigns(scope, campaigns);
     }),
   );
@@ -484,8 +492,10 @@ Bid strategies cannot be set here — they are campaign-level only since April 2
     },
     run(async (args: Record<string, unknown>) => {
       const scope = await ids(args);
-      const adGroups = args.ad_groups as Record<string, unknown>[];
-      for (const g of adGroups) rejectChildBidStrategy(g, "ad group");
+      const adGroups = (args.ad_groups as Record<string, unknown>[]).map((g) => {
+        rejectChildBidStrategy(g, "ad group");
+        return { ...g, ...isoDates(g) };
+      });
       return cm.updateAdGroups(scope, String(args.campaign_id), adGroups);
     }),
   );

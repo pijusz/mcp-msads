@@ -27,29 +27,62 @@ export const CAMPAIGN_TYPES = [
  * MaxConversionValue, so offering them would let a caller believe they set
  * something they did not. The target values live on the converted schemes.
  */
+/**
+ * Wire `Type` per strategy, keyed by the class name.
+ *
+ * The REST docs disagree with themselves (class names in some templates,
+ * `"Type": "MaxConversions"` in others). The strongest evidence is Microsoft's
+ * generated REST SDK (BingAds-Python-SDK `openapi_client/models/campaign/
+ * bidding_scheme.py`): its serializer emits these values, and its deserializer
+ * accepts both spellings where both exist. So callers may pass either the
+ * class name or the short form, and the SDK's serialized value is sent.
+ */
+const BID_STRATEGY_WIRE: Record<string, string> = {
+  EnhancedCpcBiddingScheme: "EnhancedCpc",
+  ManualCpcBiddingScheme: "ManualCpc",
+  ManualCpmBiddingScheme: "ManualCpm",
+  ManualCpvBiddingScheme: "ManualCpv",
+  MaxClicksBiddingScheme: "MaxClicks",
+  MaxConversionsBiddingScheme: "MaxConversions",
+  MaxConversionValueBiddingScheme: "MaxConversionValueBiddingScheme",
+  MaxRoasBiddingScheme: "MaxRoasBiddingScheme",
+  TargetImpressionShareBiddingScheme: "TargetImpressionShareBiddingScheme",
+  PercentCpcBiddingScheme: "PercentCpcBiddingScheme",
+  CommissionBiddingScheme: "CommissionBiddingScheme",
+  CostPerSaleBiddingScheme: "CostPerSale",
+  InheritFromParentBiddingScheme: "InheritFromParent",
+};
+
+const SUFFIX = "BiddingScheme";
+const shortName = (name: string): string =>
+  name.endsWith(SUFFIX) ? name.slice(0, -SUFFIX.length) : name;
+
+/** Canonical class name for either spelling, or undefined if unknown. */
+function canonicalBidStrategy(type: string): string | undefined {
+  const full = type.endsWith(SUFFIX) ? type : `${type}${SUFFIX}`;
+  return full in BID_STRATEGY_WIRE ? full : undefined;
+}
+
+/** Every accepted spelling: class names and their short forms. */
 export const BID_STRATEGIES = [
-  "EnhancedCpcBiddingScheme",
-  "ManualCpcBiddingScheme",
-  "ManualCpmBiddingScheme",
-  "ManualCpvBiddingScheme",
-  "MaxClicksBiddingScheme",
-  "MaxConversionsBiddingScheme",
-  "MaxConversionValueBiddingScheme",
-  "MaxRoasBiddingScheme",
-  "TargetImpressionShareBiddingScheme",
-  "PercentCpcBiddingScheme",
-  "CommissionBiddingScheme",
-  "CostPerSaleBiddingScheme",
-  "InheritFromParentBiddingScheme",
-] as const;
+  ...new Set([
+    ...Object.keys(BID_STRATEGY_WIRE),
+    ...Object.keys(BID_STRATEGY_WIRE).map(shortName),
+  ]),
+] as [string, ...string[]];
+
+const TARGET_CPA_REMOVED =
+  "TargetCpaBiddingScheme can no longer be set on a campaign (since 2025-08-04). " +
+  "Use MaxConversionsBiddingScheme and put your target in its TargetCpa field — that is exactly what the API does internally.";
+const TARGET_ROAS_REMOVED =
+  "TargetRoasBiddingScheme can no longer be set on a campaign (since 2025-08-04). " +
+  "Use MaxConversionValueBiddingScheme and put your target in its TargetRoas field.";
 
 const REMOVED_BID_STRATEGIES: Record<string, string> = {
-  TargetCpaBiddingScheme:
-    "TargetCpaBiddingScheme can no longer be set on a campaign (since 2025-08-04). " +
-    "Use MaxConversionsBiddingScheme and put your target in its TargetCpa field — that is exactly what the API does internally.",
-  TargetRoasBiddingScheme:
-    "TargetRoasBiddingScheme can no longer be set on a campaign (since 2025-08-04). " +
-    "Use MaxConversionValueBiddingScheme and put your target in its TargetRoas field.",
+  TargetCpaBiddingScheme: TARGET_CPA_REMOVED,
+  TargetCpa: TARGET_CPA_REMOVED,
+  TargetRoasBiddingScheme: TARGET_ROAS_REMOVED,
+  TargetRoas: TARGET_ROAS_REMOVED,
 };
 
 export function validateBidStrategy(scheme: unknown): void {
@@ -60,11 +93,24 @@ export function validateBidStrategy(scheme: unknown): void {
   const removed = REMOVED_BID_STRATEGIES[type];
   if (removed) throw new MsAdsError({ message: removed });
 
-  if (!(BID_STRATEGIES as readonly string[]).includes(type)) {
+  if (!canonicalBidStrategy(type)) {
     throw new MsAdsError({
-      message: `Unknown bid strategy "${type}". Valid values: ${BID_STRATEGIES.join(", ")}.`,
+      message: `Unknown bid strategy "${type}". Valid values: ${Object.keys(BID_STRATEGY_WIRE).join(", ")} (the short form without "BiddingScheme" is accepted too).`,
     });
   }
+}
+
+/**
+ * Validate, then rewrite `Type` to the value Microsoft's REST SDK sends.
+ * Returns the input unchanged when there is no scheme.
+ */
+export function normalizeBiddingScheme(scheme: unknown): unknown {
+  validateBidStrategy(scheme);
+  if (!scheme || typeof scheme !== "object") return scheme;
+  const record = scheme as Record<string, unknown>;
+  if (typeof record.Type !== "string") return scheme;
+  const canonical = canonicalBidStrategy(record.Type) as string;
+  return { ...record, Type: BID_STRATEGY_WIRE[canonical] };
 }
 
 export function validateCampaignType(type: unknown): void {
