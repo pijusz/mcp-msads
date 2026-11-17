@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resetAuthForTesting } from "@/auth/oauth";
-import { resetEnvForTesting } from "@/config/env";
+import { resetEnvForTesting, resolveClientId } from "@/config/env";
 import {
   buildHeaders,
   msadsFetch,
@@ -98,6 +98,13 @@ describe("buildHeaders", () => {
     setTestEnv({ MSADS_ENVIRONMENT: "sandbox", MSADS_DEVELOPER_TOKEN: undefined });
     resetEnvForTesting();
     expect((await buildHeaders("Reporting")).DeveloperToken).toBe("BBD37VB98");
+  });
+
+  test("requires the caller's own client id in sandbox too", () => {
+    // Microsoft's Sandbox guide: your own application id in both environments.
+    setTestEnv({ MSADS_ENVIRONMENT: "sandbox", MSADS_CLIENT_ID: undefined });
+    resetEnvForTesting();
+    expect(() => resolveClientId()).toThrow(/required in both production and sandbox/);
   });
 
   test("refuses to run in production without a developer token", async () => {

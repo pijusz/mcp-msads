@@ -148,14 +148,17 @@ create it. Rotating means issuing a new secret and redistributing it —
 existing refresh tokens keep working, since they are bound to the client id.
 
 **One registration covers both environments.** Sandbox and production share
-the same Entra app; what differs is the developer token (sandbox uses the
-universal `BBD37VB98`) and the accounts themselves. Credentials are never
+the same Entra app, and `MSADS_CLIENT_ID` is required in both — Microsoft
+requires your own application id in sandbox too, so there is no sample-app
+default. What differs is the developer token (sandbox uses the universal
+`BBD37VB98`) and the accounts themselves. Credentials are never
 interchangeable between the two — mixing them produces error 105.
 
 ### Trying it without a production account
 
 Sign up at <https://sandbox.bingads.microsoft.com>, set
-`MSADS_ENVIRONMENT=sandbox`, and no developer token is needed. Note that ads
+`MSADS_ENVIRONMENT=sandbox`, and no developer token is needed (you still
+need your own `MSADS_CLIENT_ID`). Note that ads
 never serve, Ad Insight is heavily degraded, and only nine report types return
 data.
 

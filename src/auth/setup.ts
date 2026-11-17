@@ -21,7 +21,7 @@ import {
   SCOPE,
   writeTokenFile,
 } from "@/auth/oauth";
-import { loadEnv, SANDBOX_CLIENT_ID } from "@/config/env";
+import { loadEnv } from "@/config/env";
 import { MsAdsAuthError } from "@/utils/errors";
 
 /**
@@ -359,7 +359,8 @@ export async function runSetup(argv: string[] = []): Promise<void> {
   const env = loadEnv();
   const sandbox = env.MSADS_ENVIRONMENT === "sandbox";
   const google = env.MSADS_IDENTITY_PROVIDER === "google";
-  const clientId = env.MSADS_CLIENT_ID || (sandbox && !google ? SANDBOX_CLIENT_ID : "");
+  // Your own app registration is required in sandbox too.
+  const clientId = env.MSADS_CLIENT_ID;
   const redirectUri = `http://${CALLBACK_HOST}:${port}/callback`;
 
   console.log(

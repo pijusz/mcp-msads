@@ -181,9 +181,6 @@ export function shouldValidateAtStartup(): boolean {
  */
 export const SANDBOX_DEVELOPER_TOKEN = "BBD37VB98";
 
-/** Public "Tutorial Sample App" client id — sandbox only. */
-export const SANDBOX_CLIENT_ID = "00001111-aaaa-2222-bbbb-3333cccc4444";
-
 export function resolveDeveloperToken(): string {
   const env = getEnv();
   if (env.MSADS_DEVELOPER_TOKEN) return env.MSADS_DEVELOPER_TOKEN;
@@ -201,13 +198,14 @@ export function resolveClientId(): string {
   if (env.MSADS_IDENTITY_PROVIDER === "google") {
     throw new Error(
       "MSADS_CLIENT_ID is required for Google identity. Create an OAuth 2.0 Client ID " +
-        "of type 'Web application' at https://console.cloud.google.com/apis/credentials — " +
-        "Microsoft's sandbox sample client id only works for Microsoft accounts.",
+        "of type 'Web application' at https://console.cloud.google.com/apis/credentials.",
     );
   }
-  if (isSandbox()) return SANDBOX_CLIENT_ID;
+  // No sandbox default: Microsoft requires your own application id in both
+  // production and sandbox (Sandbox guide), and the GUID formerly used here
+  // was a documentation placeholder, not a registered app.
   throw new Error(
-    "MSADS_CLIENT_ID is required. Register an application in the Microsoft Entra admin center " +
+    "MSADS_CLIENT_ID is required in both production and sandbox. Register an application in the Microsoft Entra admin center " +
       "(Accounts in any organizational directory and personal Microsoft accounts) and use its Application (client) ID.",
   );
 }

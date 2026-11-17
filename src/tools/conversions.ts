@@ -229,7 +229,9 @@ This operation returns no per-item confirmation. An empty error list is the only
             default_country_code: z
               .string()
               .optional()
-              .describe("Country code (e.g. 44) for phones without a leading + or 00; a national trunk 0 is stripped."),
+              .describe(
+                "Country code (e.g. 44) for phones without a leading + or 00; a national trunk 0 is stripped.",
+              ),
             conversion_value: z.number().optional(),
             conversion_currency_code: z.string().optional(),
             external_attribution_credit: z
