@@ -348,7 +348,9 @@ describe("dedicated service request contracts", () => {
 
   test("audience, extension, label, negative, and targeting families keep exact wire shapes", async () => {
     mock.queue("Audiences/QueryByIds", { json: { Audiences: [] } });
-    mock.queue("CustomerListUserData/Apply", { json: {} });
+    mock.queue("CustomerListUserData/Apply", {
+      json: { PartialErrors: [{ Index: 0, Code: 4850, Message: "list error" }] },
+    });
     mock.queue(
       "/Audiences",
       {
@@ -411,11 +413,14 @@ describe("dedicated service request contracts", () => {
       { Id: "5000000000000001", Type: "RemarketingList", Name: "Updated" },
     ]);
     await deleteAudiences(IDS, ["5000000000000001"]);
-    await applyCustomerList(IDS, {
+    const customerListResult = await applyCustomerList(IDS, {
       audienceId: "5000000000000001",
       action: "Add",
       emails: ["person@example.com"],
     });
+    // PartialErrors must surface instead of an unconditional "Accepted".
+    expect(customerListResult.errors).toMatchObject([{ index: 0, code: 4850 }]);
+    expect(customerListResult.message).not.toMatch(/^Accepted/);
 
     expect(await getAdExtensionIds(IDS, "SitelinkAdExtension", "Campaign")).toEqual([
       "9007199254740993",

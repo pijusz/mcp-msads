@@ -7,7 +7,7 @@ import {
   type BatchResult,
   mapBatchResult,
 } from "@/utils/batch";
-import { MsAdsError } from "@/utils/errors";
+import { type MsAdsBatchError, MsAdsError, readPartialErrors } from "@/utils/errors";
 
 /**
  * Audiences, including customer-match list upload.
@@ -169,6 +169,8 @@ export interface CustomerListResult {
   submitted: number;
   preHashed: number;
   rejected: Array<{ index: number; reason: string }>;
+  /** ApplyCustomerListUserData PartialErrors; non-empty means not all applied. */
+  errors: MsAdsBatchError[];
   message: string;
 }
 
@@ -208,18 +210,23 @@ export async function applyCustomerList(
     });
   }
 
-  await msadsFetch("CampaignManagement", "CustomerListUserData/Apply", {
-    body: {
-      CustomerListUserData: {
-        AcceptCustomerMatchTerm: true,
-        ActionType: upload.action,
-        AudienceId: upload.audienceId,
-        CustomerListItemSubType: "Email",
-        CustomerListItems: hashed.hashes,
+  const res = await msadsFetch<Record<string, unknown>>(
+    "CampaignManagement",
+    "CustomerListUserData/Apply",
+    {
+      body: {
+        CustomerListUserData: {
+          AcceptCustomerMatchTerm: true,
+          ActionType: upload.action,
+          AudienceId: upload.audienceId,
+          CustomerListItemSubType: "Email",
+          CustomerListItems: hashed.hashes,
+        },
       },
+      ...ids,
     },
-    ...ids,
-  });
+  );
+  const errors = readPartialErrors(res);
 
   return {
     audienceId: upload.audienceId,
@@ -227,7 +234,10 @@ export async function applyCustomerList(
     submitted: hashed.hashes.length,
     preHashed: hashed.preHashed,
     rejected: hashed.rejected,
+    errors,
     message:
-      "Accepted. Microsoft takes roughly 48 hours to complete matching, and an audience needs about 1,000 matched users before it can be targeted.",
+      errors.length > 0
+        ? `Microsoft reported ${errors.length} error(s) for this upload; see errors. The ${upload.action} may not have been applied.`
+        : "Accepted. Microsoft takes roughly 48 hours to complete matching, and an audience needs about 1,000 matched users before it can be targeted.",
   };
 }
