@@ -188,11 +188,7 @@ describe("extension discovery", () => {
   test("fetches every discovered id in API-sized chunks", async () => {
     const ids = Array.from({ length: 250 }, (_, i) => String(i + 1));
     mock.queue("AdExtensionIds/QueryByAccountId", {
-      json: {
-        AdExtensionIdToEntityIdAssociations: ids.map((id) => ({
-          AdExtensionId: id,
-        })),
-      },
+      json: { AdExtensionIds: ids },
     });
     for (const chunk of [ids.slice(0, 100), ids.slice(100, 200), ids.slice(200)]) {
       mock.queue("AdExtensions/QueryByIds", {

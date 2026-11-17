@@ -65,13 +65,19 @@ export const AD_EXTENSION_TYPES = [
   "LocationAdExtension",
 ] as const;
 
+/**
+ * Ids of the account's extensions of one type.
+ *
+ * GetAdExtensionIdsByAccountId answers `{ AdExtensionIds: long[] }` — bare ids,
+ * not associations. Omit `associationType` to include unassociated extensions.
+ */
 export async function getAdExtensionIds(
   ids: AccountIds,
   extensionType: string,
   associationType?: string,
-): Promise<Record<string, unknown>[]> {
+): Promise<string[]> {
   const res = await msadsFetch<{
-    AdExtensionIdToEntityIdAssociations?: Record<string, unknown>[];
+    AdExtensionIds?: Array<string | number | null> | null;
   }>("CampaignManagement", "AdExtensionIds/QueryByAccountId", {
     body: {
       AccountId: ids.accountId,
@@ -81,7 +87,10 @@ export async function getAdExtensionIds(
     ...ids,
     retry: "safe",
   });
-  return res.AdExtensionIdToEntityIdAssociations ?? [];
+  const list = Array.isArray(res.AdExtensionIds) ? res.AdExtensionIds : [];
+  return [
+    ...new Set(list.filter((id) => id !== null && id !== "").map((id) => String(id))),
+  ];
 }
 
 export async function getAdExtensionsByIds(

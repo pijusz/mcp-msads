@@ -361,7 +361,7 @@ describe("dedicated service request contracts", () => {
       { json: {} },
     );
     mock.queue("AdExtensionIds/QueryByAccountId", {
-      json: { AdExtensionIdToEntityIdAssociations: [] },
+      json: { AdExtensionIds: ["9007199254740993", 42, null, "9007199254740993"] },
     });
     mock.queue("AdExtensions/QueryByIds", { json: { AdExtensions: [] } });
     mock.queue(
@@ -417,7 +417,10 @@ describe("dedicated service request contracts", () => {
       emails: ["person@example.com"],
     });
 
-    await getAdExtensionIds(IDS, "SitelinkAdExtension", "Campaign");
+    expect(await getAdExtensionIds(IDS, "SitelinkAdExtension", "Campaign")).toEqual([
+      "9007199254740993",
+      "42",
+    ]);
     await getAdExtensionsByIds(IDS, ["5100000000000001"], "SitelinkAdExtension");
     const addedExtensions = await addAdExtensions(IDS, [
       { Type: "SitelinkAdExtension" },

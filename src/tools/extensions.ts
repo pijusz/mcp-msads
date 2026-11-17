@@ -52,16 +52,9 @@ export function registerExtensionTools(server: McpServer): void {
         });
       }
 
-      // Without ids the API only hands back id↔entity associations, so fetch
-      // those first and then the extensions they name.
-      const associations = await ext.getAdExtensionIds(scope, type);
-      const foundIds = [
-        ...new Set(
-          associations
-            .map((a) => String((a as Record<string, unknown>).AdExtensionId ?? ""))
-            .filter(Boolean),
-        ),
-      ];
+      // Without ids, list the account's extension ids of this type first
+      // (associated or not), then fetch the extensions they name.
+      const foundIds = await ext.getAdExtensionIds(scope, type);
       if (foundIds.length === 0) {
         return {
           ...collectionEnvelope("ad_extensions", [], {
