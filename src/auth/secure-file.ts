@@ -18,11 +18,17 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const FILE_MODE = 0o600;
 /**
- * Default lock wait. The holder may be mid token refresh, which can take up to
- * the request timeout (60s default), so the wait must outlast that.
+ * Default lock wait. The token refresh passes its own, longer wait (see
+ * tokenLockWaitMs in oauth.ts), since a holder may be mid refresh.
  */
-const LOCK_WAIT_MS = 75_000;
+const LOCK_WAIT_MS = 5_000;
+/**
+ * First poll interval. It doubles on each miss up to LOCK_POLL_BACKOFF_CAP
+ * times the first interval (50ms → 1s by default), so a long wait polls
+ * rarely while a busy, briefly held lock is still picked up quickly.
+ */
 const LOCK_POLL_MS = 50;
+const LOCK_POLL_BACKOFF_CAP = 20;
 const LOCK_HOST = "127.0.0.1";
 const FIRST_DYNAMIC_PORT = 49_152;
 const DYNAMIC_PORT_COUNT = 16_384;
@@ -160,7 +166,8 @@ function bindLockServer(port: number): Promise<Server> {
 
 async function acquireLockServer(port: number, waitMs: number, pollMs: number) {
   const deadline = Date.now() + waitMs;
-  while (true) {
+  const maxInterval = pollMs * LOCK_POLL_BACKOFF_CAP;
+  for (let interval = pollMs; ; interval = Math.min(interval * 2, maxInterval)) {
     try {
       return await bindLockServer(port);
     } catch (error) {
@@ -173,7 +180,9 @@ async function acquireLockServer(port: number, waitMs: number, pollMs: number) {
             "own this credential path's deterministic lock port; acquisition fails closed.",
         );
       }
-      await delay(Math.min(pollMs, remainingMs));
+      // Jitter keeps simultaneous waiters from polling in lockstep, which would
+      // hand the lock over only once per interval.
+      await delay(Math.min(interval * (0.5 + Math.random() / 2), remainingMs));
     }
   }
 }

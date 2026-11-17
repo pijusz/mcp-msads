@@ -19,7 +19,8 @@ src/
 ├── prompts/
 │   └── index.ts               # MCP prompts: multi-step workflows over the tools
 ├── services/
-│   ├── msads-api.ts           # The only HTTP path: retries, 109 refresh, faults
+│   ├── msads-api.ts           # The only HTTP path: retries, 109 refresh, faults; Scope
+│   ├── batch-write.ts         # EntitySpec + batchWrite: shared add/update/delete
 │   ├── accounts.ts            # Customer Management + account/customer resolution
 │   ├── campaigns.ts           # Campaigns, ad groups, ads, keywords, budgets, labels
 │   ├── targeting.ts           # Campaign / ad group criterions, LinkedIn profiles
@@ -35,10 +36,11 @@ src/
 │   ├── bulk.ts                # Whole-account export, delta sync, bulk upload
 │   ├── billing.ts             # Customer Billing
 │   ├── guardrails.ts          # Rules the API ignores silently
+│   ├── wire-types.ts          # Class-name / short-form Type aliasing
 │   └── cache.ts               # In-memory, credential-scoped
 ├── tools/
 │   ├── index.ts               # Barrel
-│   ├── _shared.ts             # WRITE, ACCOUNT_ARGS, ids()
+│   ├── _shared.ts             # WRITE, ACCOUNT_ARGS, ID, ids()
 │   ├── accounts.ts  campaigns.ts  targeting.ts  extensions.ts
 │   ├── audiences.ts conversions.ts import-jobs.ts
 │   ├── reports.ts   insights.ts   bulk.ts       billing.ts
@@ -48,6 +50,8 @@ src/
     ├── register-tool.ts       # read / write / destructive annotations
     ├── tool-response.ts       # ok / fail / run wrappers
     ├── batch.ts               # Partial-failure reconciliation
+    ├── poll-job.ts            # submit → poll → timeout loop with injectable Clock
+    ├── dates.ts               # toMsDate: YYYY-MM-DD → { Day, Month, Year }
     ├── collection.ts          # Shared bounded collection envelope
     ├── errors.ts              # MsAdsError, code table, hints
     ├── safe-http.ts           # Bounded, SSRF-checked fetch for API-issued URLs
@@ -85,9 +89,20 @@ Conventions:
 
 ## Shared tool helpers
 
-`src/tools/_shared.ts` holds `WRITE`, `ACCOUNT_ARGS`, and `ids()`. Use them
+`src/tools/_shared.ts` holds `WRITE`, `ACCOUNT_ARGS`, `ID`, and `ids()`. Use them
 rather than re-declaring — eight copies had already drifted into two different
 descriptions for the same argument.
+
+`ID` is a digit-only string schema for Microsoft Advertising entity ids. Use it
+for 64-bit id inputs; do not use it for opaque request ids (report, bulk),
+Google Ads ids, raw tool arguments, or bulk records, whose temporary ids are
+negative.
+
+Handlers receive their parsed arguments typed as `ToolArgs<Shape>` (the
+`z.output` of the strict schema), on both the tool and resource surfaces. Do
+not re-coerce with `String()` / `Number()` or cast with `as`; a helper that
+builds a handler outside the registration call annotates its parameter as
+`ToolArgs<typeof SHAPE>`.
 
 `ACCOUNT_ARGS` exposes only `account_id`. `customer_id` is resolved from it and
 is deliberately not on tool schemas: it appeared in 64 of 74 only to say
@@ -129,18 +144,35 @@ destructiveTool(server, "delete_widgets", `⚠️ WRITE OPERATION — …`, sche
 - `writeTool` for create/update (`destructiveHint: false`).
 - `destructiveTool` for deletes and anything that loses data.
 - Descriptions start with **⚠️ WRITE OPERATION**.
-- Default new entities to `Paused`.
+- Default new entities to `Paused` — in the service's `EntitySpec.toWire`,
+  not the tool, so every caller gets it.
 - Return `mapBatchResult()` output — never a bare boolean.
+- Keep Zod schemas and descriptions in `tools/`; put write guardrails and wire
+  shaping in the service.
 
 ## Batch writes
 
 Microsoft has no all-or-nothing mode. The id array is positional with `null` for
 failures; `PartialErrors` is not positional and carries its own `Index`.
 
+Entity writes with the common shape are an `EntitySpec` plus `batchWrite`
+(`services/batch-write.ts`), which checks the limit, runs `toWire` per item,
+sends `{ [parent], [list]: items }` (or `{ [parent], [idField]: ids }` on
+delete), and reconciles the result:
+
 ```ts
-assertBatchLimit(items, BATCH_LIMITS.campaigns, "campaigns");
-const res = await call("Campaigns", "POST", { AccountId, Campaigns: items }, ids);
-return mapBatchResult(res, "CampaignIds", items.map((c) => String(c.Name)), items.length);
+const CAMPAIGNS: EntitySpec = {
+  path: "Campaigns",
+  parent: "AccountId",
+  list: "Campaigns",
+  idField: "CampaignIds",
+  limit: BATCH_LIMITS.campaigns,
+  what: "campaigns",
+  toWire(c, op) { /* guardrails + shaping; Paused default when op === "add" */ },
+  label: (c, op) => String(op === "add" ? (c.Name ?? "") : (c.Name ?? c.Id ?? "")),
+};
+export const addCampaigns = (scope: Scope, items: Record<string, unknown>[]) =>
+  batchWrite(CAMPAIGNS, "add", scope, undefined, items);
 ```
 
 Real limits are lower than intuition: **100** campaigns, **50** ads, 1,000 ad
@@ -152,6 +184,12 @@ bugs: association writes return only `PartialErrors` (use `AssociationResult`),
 `AdExtensionIdentities` holds objects rather than ids, and `NegativeKeywordIds`
 is keyed to entities with the keyword ids nested one level down. Read the
 operation's reference page rather than following the prevailing pattern.
+
+## Long-running jobs
+
+Reports, bulk downloads and bulk uploads poll through `pollJob()` in
+`utils/poll-job.ts`. Pass `clock` in tests (`now()` plus an instant `sleep()`)
+to exercise the cadence and budget expiry without waiting.
 
 ## Errors
 

@@ -4,8 +4,8 @@ import {
   buildUserData,
   type CapiEvent,
   MAX_EVENTS_PER_BATCH,
+  parseCapiResponse,
   sendEvents,
-  splitDiagnostics,
   validateEvent,
 } from "@/services/capi";
 import { sha256Hex } from "@/services/pii";
@@ -134,11 +134,11 @@ const DOC_ENVELOPE = {
   },
 };
 
-describe("splitDiagnostics", () => {
+describe("parseCapiResponse", () => {
   test("separates warnings from errors", () => {
     // A warning means the event landed with a field stripped — partial data
     // loss behind a 200, which must not be reported as success.
-    const { errors, warnings } = splitDiagnostics({
+    const { errors, warnings } = parseCapiResponse({
       errors: [{ message: "bad field", isWarning: true }, { message: "fatal" }],
     });
     expect(warnings).toHaveLength(1);
@@ -146,14 +146,14 @@ describe("splitDiagnostics", () => {
   });
 
   test("reads the documented error.details envelope", () => {
-    const { errors, warnings } = splitDiagnostics(DOC_ENVELOPE);
+    const { errors, warnings } = parseCapiResponse(DOC_ENVELOPE);
     expect(errors).toHaveLength(1);
     expect(warnings).toHaveLength(1);
   });
 
   test("returns empty lists for a clean response", () => {
-    expect(splitDiagnostics({})).toEqual({ errors: [], warnings: [] });
-    expect(splitDiagnostics(null)).toEqual({ errors: [], warnings: [] });
+    expect(parseCapiResponse({})).toMatchObject({ errors: [], warnings: [] });
+    expect(parseCapiResponse(null)).toMatchObject({ errors: [], warnings: [] });
   });
 });
 

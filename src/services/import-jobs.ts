@@ -1,5 +1,4 @@
-import type { AccountIds } from "@/services/campaigns";
-import { msadsFetch } from "@/services/msads-api";
+import { msadsFetch, type Scope } from "@/services/msads-api";
 import { type BatchResult, mapBatchResult } from "@/utils/batch";
 import { MsAdsError } from "@/utils/errors";
 
@@ -113,7 +112,7 @@ export function buildImportJob(input: ImportJobInput): Record<string, unknown> {
 
 /** Only one import job per call is accepted. */
 export async function addImportJob(
-  ids: AccountIds,
+  ids: Scope,
   input: ImportJobInput,
 ): Promise<BatchResult> {
   const job = buildImportJob(input);
@@ -126,7 +125,7 @@ export async function addImportJob(
 }
 
 export async function getImportJobs(
-  ids: AccountIds,
+  ids: Scope,
   jobIds?: string[],
 ): Promise<Record<string, unknown>[]> {
   const res = await msadsFetch<{ ImportJobs?: Record<string, unknown>[] }>(
@@ -146,7 +145,7 @@ export async function getImportJobs(
 }
 
 export async function deleteImportJobs(
-  ids: AccountIds,
+  ids: Scope,
   jobIds: string[],
 ): Promise<BatchResult> {
   const res = await msadsFetch<Record<string, unknown>>(
@@ -168,7 +167,7 @@ export async function deleteImportJobs(
 
 /** Results for completed runs. Only the last 90 days are retained. */
 export async function getImportResults(
-  ids: AccountIds,
+  ids: Scope,
   jobIds?: string[],
   pageIndex = 0,
   pageSize = 100,
@@ -191,7 +190,7 @@ export async function getImportResults(
 
 /** Map Google entity ids to the Microsoft ids they were imported as. */
 export async function getImportEntityIdsMapping(
-  ids: AccountIds,
+  ids: Scope,
   entityType: string,
   sourceEntityIds: string[],
   sourceParentId?: string,

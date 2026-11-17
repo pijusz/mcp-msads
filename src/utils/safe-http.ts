@@ -27,8 +27,6 @@ export interface SafeHttpDependencies {
 export interface SafeHttpOptions extends SafeHttpDependencies {
   timeoutMs: number;
   maxBytes: number;
-  /** When set, the initial URL and every redirect must keep this exact origin. */
-  allowedOrigin?: string;
   /**
    * When set, the initial URL and every redirect must have a hostname this
    * accepts (HTTPS/443 is enforced regardless).
@@ -87,13 +85,27 @@ export async function readResponseBytes(
   return Buffer.concat(chunks, size);
 }
 
-export function parseJsonBytes(bytes: Uint8Array): unknown {
-  if (bytes.byteLength === 0) return null;
+export type JsonParseResult =
+  | { kind: "empty" }
+  | { kind: "invalid" }
+  | { kind: "json"; value: unknown };
+
+/** Parse JSON, telling an empty (or whitespace-only) body apart from invalid JSON. */
+export function tryParseJsonBytes(bytes: Uint8Array): JsonParseResult {
+  if (bytes.byteLength === 0) return { kind: "empty" };
+  const text = new TextDecoder().decode(bytes);
+  if (text.trim() === "") return { kind: "empty" };
   try {
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return { kind: "json", value: JSON.parse(text) };
   } catch {
-    return null;
+    return { kind: "invalid" };
   }
+}
+
+/** Lenient parse: `null` for an empty or invalid body. */
+export function parseJsonBytes(bytes: Uint8Array): unknown {
+  const parsed = tryParseJsonBytes(bytes);
+  return parsed.kind === "json" ? parsed.value : null;
 }
 
 /**
@@ -123,7 +135,6 @@ export async function safeFetchBytes(
       const addresses = await validateDestination(
         url,
         lookup,
-        options.allowedOrigin,
         controller.signal,
         options.allowedHost,
       );
@@ -272,7 +283,6 @@ function pinnedHttpsRequest(
 async function validateDestination(
   url: URL,
   lookup: DnsLookup,
-  allowedOrigin: string | undefined,
   signal: AbortSignal,
   allowedHost?: (hostname: string) => boolean,
 ): Promise<readonly string[]> {
@@ -285,9 +295,6 @@ async function validateDestination(
     throw new MsAdsError({
       message: "Outbound URLs must use HTTPS on port 443 without embedded credentials.",
     });
-  }
-  if (allowedOrigin && url.origin !== allowedOrigin) {
-    throw new MsAdsError({ message: "Outbound URL is outside the approved origin." });
   }
   if (allowedHost && !allowedHost(url.hostname.toLowerCase())) {
     throw new MsAdsError({ message: "Outbound URL is outside the approved origin." });

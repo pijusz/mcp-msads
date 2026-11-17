@@ -32,6 +32,11 @@ export function strictToolSchema<Args extends ZodRawShape>(shape: Args) {
   return z.strictObject(shape);
 }
 
+/** Parsed arguments a handler receives for a tool declared with this shape. */
+export type ToolArgs<Args extends ZodRawShape> = z.output<
+  ReturnType<typeof strictToolSchema<Args>>
+>;
+
 export function readTool<Args extends ZodRawShape>(
   server: McpServer,
   name: string,

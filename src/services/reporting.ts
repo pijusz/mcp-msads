@@ -1,14 +1,17 @@
 import { getEnv } from "@/config/env";
-import { downloadFile, msadsFetch } from "@/services/msads-api";
+import { downloadFile, msadsFetch, type Scope } from "@/services/msads-api";
 import {
   type Aggregation,
   getReportType,
   type PredefinedTime,
+  type ReportTypeSpec,
   type ScopeKind,
 } from "@/services/report-types";
 import { type ParsedReport, parseReportCsv } from "@/utils/csv";
+import { toMsDate } from "@/utils/dates";
 import { MsAdsError } from "@/utils/errors";
 import { log } from "@/utils/logger";
+import { type Clock, pollJob } from "@/utils/poll-job";
 import { unzipSingleText } from "@/utils/zip";
 
 /**
@@ -20,39 +23,6 @@ import { unzipSingleText } from "@/utils/zip";
  * a bounded wait with a resumable id, correct handling of the "success but no
  * URL" case, and a re-poll when the download URL ages out mid-flight.
  */
-
-/** Microsoft's `Date` is an object, not a string. */
-export interface MsDate {
-  Day: number;
-  Month: number;
-  Year: number;
-}
-
-/** Convert `YYYY-MM-DD` into the API's date object. */
-export function toMsDate(iso: string): MsDate {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
-  if (!m) {
-    throw new MsAdsError({
-      message: `Invalid date "${iso}". Use YYYY-MM-DD.`,
-    });
-  }
-  const [, year, month, day] = m;
-  const date = {
-    Year: Number(year),
-    Month: Number(month),
-    Day: Number(day),
-  };
-  // Reject 2026-02-31 and friends before the API does, with a clearer message.
-  const probe = new Date(Date.UTC(date.Year, date.Month - 1, date.Day));
-  if (
-    probe.getUTCFullYear() !== date.Year ||
-    probe.getUTCMonth() !== date.Month - 1 ||
-    probe.getUTCDate() !== date.Day
-  ) {
-    throw new MsAdsError({ message: `"${iso}" is not a real calendar date.` });
-  }
-  return date;
-}
 
 export interface ScopeInput {
   accountIds?: string[];
@@ -88,11 +58,14 @@ function assertLimit(list: string[] | undefined, max: number, what: string): voi
  * The four scope shapes are not interchangeable: an `AccountReportScope` has
  * only `AccountIds`, while the others add campaign / ad group / asset group
  * arrays that are UNIONed with it (not intersected).
+ *
+ * Pass `warnings` to be told when child entries had to omit their CampaignId.
  */
 export function buildScope(
   kind: ScopeKind,
   input: ScopeInput,
   accountId: string,
+  warnings?: string[],
 ): Record<string, unknown> {
   const accountIds = input.accountIds?.length ? input.accountIds : [accountId];
   assertLimit(accountIds, SCOPE_LIMITS.accounts, "accounts");
@@ -134,26 +107,22 @@ export function buildScope(
     (input.campaignIds?.length === 1 ? input.campaignIds[0] : undefined);
   const withParent = parentCampaignId ? { CampaignId: parentCampaignId } : {};
 
-  if (kind === "assetgroup") {
-    if (input.assetGroupIds?.length) {
-      return {
-        AssetGroups: input.assetGroupIds.map((id) => ({
-          AccountId: accountId,
-          ...withParent,
-          AssetGroupId: id,
-        })),
-      };
-    }
-    return campaigns?.length ? { Campaigns: campaigns } : { AccountIds: accountIds };
-  }
+  const [listKey, idKey, childIds] =
+    kind === "assetgroup"
+      ? (["AssetGroups", "AssetGroupId", input.assetGroupIds] as const)
+      : (["AdGroups", "AdGroupId", input.adGroupIds] as const);
 
-  // adgroup
-  if (input.adGroupIds?.length) {
+  if (childIds?.length) {
+    if (!parentCampaignId) {
+      warnings?.push(
+        "Child scope entries were sent without CampaignId (the AdGroupReportScope / AssetGroupReportScope schema lists it). Pass campaign_id if the API rejects the scope.",
+      );
+    }
     return {
-      AdGroups: input.adGroupIds.map((id) => ({
+      [listKey]: childIds.map((id) => ({
         AccountId: accountId,
         ...withParent,
-        AdGroupId: id,
+        [idKey]: id,
       })),
     };
   }
@@ -192,6 +161,42 @@ export interface BuiltReportRequest {
 }
 
 /**
+ * Omitting TimePeriod for a non-Summary aggregation makes the API silently
+ * downgrade to Summary, so the caller gets numbers that don't mean what they
+ * asked for.
+ */
+function needsTimePeriod(spec: ReportTypeSpec, aggregation: Aggregation): boolean {
+  return aggregation !== "Summary" && !spec.noTimePeriodColumn;
+}
+
+interface RequiredColumn {
+  column: string;
+  /** Insert at the front rather than the end. */
+  first?: boolean;
+  warning: string;
+}
+
+/** Columns the request must carry: the type's required ones, plus TimePeriod. */
+function requiredColumnsFor(
+  spec: ReportTypeSpec,
+  reportType: string,
+  aggregation: Aggregation | undefined,
+): RequiredColumn[] {
+  const required: RequiredColumn[] = (spec.requiredColumns ?? []).map((column) => ({
+    column,
+    warning: `Added the required column "${column}" for ${reportType}.`,
+  }));
+  if (aggregation && needsTimePeriod(spec, aggregation)) {
+    required.push({
+      column: "TimePeriod",
+      first: true,
+      warning: `Added the TimePeriod column: without it the API silently ignores "${aggregation}" aggregation and returns a Summary.`,
+    });
+  }
+  return required;
+}
+
+/**
  * Assemble the `SubmitGenerateReport` body, validating the combinations the
  * API rejects with unhelpful numeric codes.
  */
@@ -217,35 +222,31 @@ export function buildReportRequest(input: ReportRequestInput): BuiltReportReques
     }
   }
 
-  for (const required of spec.requiredColumns ?? []) {
-    if (!columns.includes(required)) {
-      columns.push(required);
-      warnings.push(`Added the required column "${required}" for ${input.reportType}.`);
-    }
-  }
-
   // Types without an Aggregation element (budget_summary, change history,
   // negative keyword conflicts) reject one, and have no TimePeriod column.
+  const aggregation = spec.noAggregation ? undefined : (input.aggregation ?? "Daily");
+
+  const present = new Set(columns);
+  for (const { column, first, warning } of requiredColumnsFor(
+    spec,
+    input.reportType,
+    aggregation,
+  )) {
+    if (present.has(column)) continue;
+    present.add(column);
+    if (first) columns.unshift(column);
+    else columns.push(column);
+    warnings.push(warning);
+  }
+
   if (spec.noAggregation && input.aggregation) {
     warnings.push(
       `The ${input.reportType} report has no aggregation setting; ignored aggregation "${input.aggregation}".`,
     );
   }
-  const aggregation = spec.noAggregation ? undefined : (input.aggregation ?? "Daily");
 
-  // Error 2034: TimePeriod with Summary. The inverse — omitting TimePeriod for
-  // a non-Summary aggregation — is worse, because the API silently downgrades
-  // to Summary and the caller gets numbers that don't mean what they asked for.
-  if (spec.noAggregation) {
-    // No aggregation, so neither the TimePeriod auto-add nor the 2034 check.
-  } else if (aggregation && aggregation !== "Summary" && !spec.noTimePeriodColumn) {
-    if (!columns.includes("TimePeriod")) {
-      columns.unshift("TimePeriod");
-      warnings.push(
-        `Added the TimePeriod column: without it the API silently ignores "${aggregation}" aggregation and returns a Summary.`,
-      );
-    }
-  } else if (columns.includes("TimePeriod")) {
+  // Error 2034: TimePeriod with Summary (or on a type without the column).
+  if (aggregation && !needsTimePeriod(spec, aggregation) && present.has("TimePeriod")) {
     if (callerChoseColumns) {
       throw new MsAdsError({
         message:
@@ -269,21 +270,8 @@ export function buildReportRequest(input: ReportRequestInput): BuiltReportReques
     ExcludeReportFooter: true,
     ReturnOnlyCompleteData: input.returnOnlyCompleteData ?? false,
     Columns: columns,
-    Scope: buildScope(spec.scope, input.scope ?? {}, input.accountId),
+    Scope: buildScope(spec.scope, input.scope ?? {}, input.accountId, warnings),
   };
-
-  const scope = input.scope ?? {};
-  const childIds =
-    spec.scope === "adgroup"
-      ? scope.adGroupIds
-      : spec.scope === "assetgroup"
-        ? scope.assetGroupIds
-        : undefined;
-  if (childIds?.length && !scope.campaignId && (scope.campaignIds?.length ?? 0) !== 1) {
-    warnings.push(
-      "Child scope entries were sent without CampaignId (the AdGroupReportScope / AssetGroupReportScope schema lists it). Pass campaign_id if the API rejects the scope.",
-    );
-  }
 
   if (aggregation) request.Aggregation = aggregation;
 
@@ -389,7 +377,7 @@ export interface SubmitResult {
 
 export async function submitReport(
   body: Record<string, unknown>,
-  ids: { accountId: string; customerId?: string },
+  ids: Scope,
 ): Promise<SubmitResult> {
   const res = await msadsFetch<{ ReportRequestId?: string }>(
     "Reporting",
@@ -413,7 +401,7 @@ export interface PollResult {
 
 export async function pollReport(
   reportRequestId: string,
-  ids: { accountId: string; customerId?: string },
+  ids: Scope,
 ): Promise<PollResult> {
   const res = await msadsFetch<{
     ReportRequestStatus?: { Status?: string; ReportDownloadUrl?: string | null };
@@ -443,7 +431,7 @@ export async function fetchReportFile(
 async function fetchReportWithFreshUrl(
   reportRequestId: string,
   downloadUrl: string,
-  ids: { accountId: string; customerId?: string },
+  ids: Scope,
   format: "Csv" | "Tsv",
   maxRows: number,
 ): Promise<ParsedReport> {
@@ -489,6 +477,59 @@ export function pollDelayMs(attempt: number, base: number): number {
 }
 
 /**
+ * Interpret one poll of a submitted report: `null` while it is still pending,
+ * otherwise the finished result. Shared by `runReport` and
+ * `getSubmittedReport` so a status means the same thing on both paths.
+ */
+async function settleReport(
+  reportRequestId: string,
+  result: PollResult,
+  ids: Scope,
+  opts: {
+    format: "Csv" | "Tsv";
+    maxRows: number;
+    warnings: string[];
+    waitedMs: () => number;
+  },
+): Promise<RunReportResult | null> {
+  if (result.status === "Error") {
+    throw new MsAdsError({
+      message:
+        `Report ${reportRequestId} failed server-side. Resubmitting sometimes clears a transient failure; ` +
+        "if it keeps failing, the column or filter combination is likely invalid for this report type.",
+    });
+  }
+  if (result.status !== "Success") return null;
+
+  // A null URL on Success is the documented "no rows matched" signal, not
+  // an error. Reporting it as an error would be actively misleading.
+  if (!result.downloadUrl) {
+    return {
+      status: "no_data",
+      reportRequestId,
+      warnings: opts.warnings,
+      waitedMs: opts.waitedMs(),
+      message:
+        "The report generated successfully but matched zero rows for these parameters.",
+    };
+  }
+  const report = await fetchReportWithFreshUrl(
+    reportRequestId,
+    result.downloadUrl,
+    ids,
+    opts.format,
+    opts.maxRows,
+  );
+  return {
+    status: "complete",
+    reportRequestId,
+    report,
+    warnings: opts.warnings,
+    waitedMs: opts.waitedMs(),
+  };
+}
+
+/**
  * Run a report to completion within a time budget.
  *
  * On timeout this returns `status: "pending"` with the report id rather than
@@ -497,8 +538,8 @@ export function pollDelayMs(attempt: number, base: number): number {
  */
 export async function runReport(
   input: ReportRequestInput,
-  ids: { accountId: string; customerId?: string },
-  opts: { timeoutMs?: number; pollMs?: number; maxRows?: number } = {},
+  ids: Scope,
+  opts: { timeoutMs?: number; pollMs?: number; maxRows?: number; clock?: Clock } = {},
 ): Promise<RunReportResult> {
   const env = getEnv();
   const timeoutMs = opts.timeoutMs ?? env.MSADS_REPORT_TIMEOUT_MS;
@@ -508,62 +549,29 @@ export async function runReport(
   const { reportRequestId } = await submitReport(body, ids);
   log.info(`Report ${input.reportType} submitted as ${reportRequestId}`);
 
-  const started = Date.now();
-  for (let attempt = 0; ; attempt++) {
-    const result = await pollReport(reportRequestId, ids);
-
-    if (result.status === "Error") {
-      throw new MsAdsError({
-        message:
-          `Report ${reportRequestId} failed server-side. Resubmitting sometimes clears a transient failure; ` +
-          "if it keeps failing, the column or filter combination is likely invalid for this report type.",
-      });
-    }
-
-    if (result.status === "Success") {
-      // A null URL on Success is the documented "no rows matched" signal, not
-      // an error. Reporting it as an error would be actively misleading.
-      if (!result.downloadUrl) {
-        return {
-          status: "no_data",
-          reportRequestId,
-          warnings,
-          waitedMs: Date.now() - started,
-          message:
-            "The report generated successfully but matched zero rows for these parameters.",
-        };
-      }
-      const report = await fetchReportWithFreshUrl(
-        reportRequestId,
-        result.downloadUrl,
-        ids,
-        input.format ?? "Csv",
-        opts.maxRows ?? Number.POSITIVE_INFINITY,
-      );
-      return {
-        status: "complete",
-        reportRequestId,
-        report,
+  return pollJob<RunReportResult | null, RunReportResult>({
+    clock: opts.clock,
+    poll: async (_attempt, elapsedMs) =>
+      settleReport(reportRequestId, await pollReport(reportRequestId, ids), ids, {
+        format: input.format ?? "Csv",
+        maxRows: opts.maxRows ?? Number.POSITIVE_INFINITY,
         warnings,
-        waitedMs: Date.now() - started,
-      };
-    }
-
-    if (Date.now() - started >= timeoutMs) {
-      return {
-        status: "pending",
-        reportRequestId,
-        warnings,
-        waitedMs: Date.now() - started,
-        message:
-          `Still generating after ${Math.round((Date.now() - started) / 1000)}s. The report is not lost — ` +
-          `call get_report with report_request_id "${reportRequestId}" to collect it. ` +
-          "The id stays valid for about a day.",
-      };
-    }
-
-    await new Promise((r) => setTimeout(r, pollDelayMs(attempt, pollMs)));
-  }
+        waitedMs: elapsedMs,
+      }),
+    isPending: (result) => result === null,
+    budgetMs: timeoutMs,
+    delay: (attempt) => pollDelayMs(attempt, pollMs),
+    onTimeout: (_last, waitedMs) => ({
+      status: "pending",
+      reportRequestId,
+      warnings,
+      waitedMs,
+      message:
+        `Still generating after ${Math.round(waitedMs / 1000)}s. The report is not lost — ` +
+        `call get_report with report_request_id "${reportRequestId}" to collect it. ` +
+        "The id stays valid for about a day.",
+    }),
+  }) as Promise<RunReportResult>;
 }
 
 /**
@@ -573,46 +581,23 @@ export async function runReport(
  */
 export async function getSubmittedReport(
   reportRequestId: string,
-  ids: { accountId: string; customerId?: string },
+  ids: Scope,
   format: "Csv" | "Tsv" = "Csv",
   maxRows = Number.POSITIVE_INFINITY,
 ): Promise<RunReportResult> {
-  const result = await pollReport(reportRequestId, ids);
-
-  if (result.status === "Pending") {
-    return {
+  const settled = await settleReport(
+    reportRequestId,
+    await pollReport(reportRequestId, ids),
+    ids,
+    { format, maxRows, warnings: [], waitedMs: () => 0 },
+  );
+  return (
+    settled ?? {
       status: "pending",
       reportRequestId,
       warnings: [],
       waitedMs: 0,
       message: "Still generating. Try again shortly.",
-    };
-  }
-  if (result.status === "Error") {
-    throw new MsAdsError({
-      message: `Report ${reportRequestId} failed server-side. Submit a new one.`,
-    });
-  }
-  if (!result.downloadUrl) {
-    return {
-      status: "no_data",
-      reportRequestId,
-      warnings: [],
-      waitedMs: 0,
-      message: "The report completed but matched zero rows.",
-    };
-  }
-  return {
-    status: "complete",
-    reportRequestId,
-    report: await fetchReportWithFreshUrl(
-      reportRequestId,
-      result.downloadUrl,
-      ids,
-      format,
-      maxRows,
-    ),
-    warnings: [],
-    waitedMs: 0,
-  };
+    }
+  );
 }

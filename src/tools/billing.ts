@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { resolveAccount } from "@/services/accounts";
 import * as billing from "@/services/billing";
+import { ID } from "@/tools/_shared";
 import {
   COLLECTION_LIMIT,
   collectionEnvelope,
@@ -29,18 +30,15 @@ export function registerBillingTools(server: McpServer): void {
       "reports show delivery, billing shows what was charged after invalid-traffic credits and adjustments. " +
       "Use this one for finance questions and reports for performance questions.",
     inputSchema: {
-      account_id: z
-        .string()
-        .optional()
-        .describe("Ad account id. Defaults to MSADS_ACCOUNT_ID."),
+      account_id: ID.optional().describe("Ad account id. Defaults to MSADS_ACCOUNT_ID."),
       year: z.number().int().min(2000).max(2100).describe("Calendar year."),
       month: z.number().int().min(1).max(12).describe("Calendar month, 1–12."),
     },
     handler: async (args) => {
-      const year = Number(args.year);
-      const month = Number(args.month);
+      const year = args.year;
+      const month = args.month;
       const scope = await resolveAccount({
-        accountId: args.account_id as string | undefined,
+        accountId: args.account_id,
       });
       const spend = await billing.getAccountMonthlySpend(scope.accountId, year, month);
       return {
@@ -62,10 +60,7 @@ export function registerBillingTools(server: McpServer): void {
       "with their budget, balance, and start/end dates.\n\n" +
       "Worth checking when campaigns stop delivering for no apparent reason: an exhausted or expired insertion order halts spend regardless of campaign budgets.",
     inputSchema: {
-      account_id: z
-        .string()
-        .optional()
-        .describe("Ad account id. Defaults to MSADS_ACCOUNT_ID."),
+      account_id: ID.optional().describe("Ad account id. Defaults to MSADS_ACCOUNT_ID."),
       page_index: z
         .number()
         .int()
@@ -82,10 +77,10 @@ export function registerBillingTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await resolveAccount({
-        accountId: args.account_id as string | undefined,
+        accountId: args.account_id,
       });
-      const pageIndex = Number(args.page_index ?? 0);
-      const pageSize = Number(args.page_size ?? billing.INSERTION_ORDER_PAGE_MAX);
+      const pageIndex = args.page_index ?? 0;
+      const pageSize = args.page_size ?? billing.INSERTION_ORDER_PAGE_MAX;
       const orders = await billing.searchInsertionOrders(
         [{ Field: "AccountId", Operator: "Equals", Value: scope.accountId }],
         pageIndex,
@@ -112,7 +107,7 @@ export function registerBillingTools(server: McpServer): void {
       "Use the returned ids to locate the actual invoices in the Microsoft Advertising UI.",
     inputSchema: {
       account_ids: z
-        .array(z.string())
+        .array(ID)
         .max(1000)
         .optional()
         .describe("Ad account ids. Defaults to MSADS_ACCOUNT_ID."),
@@ -127,18 +122,16 @@ export function registerBillingTools(server: McpServer): void {
       limit: COLLECTION_LIMIT,
     },
     handler: async (args) => {
-      const accountIds = Array.isArray(args.account_ids)
-        ? args.account_ids.map(String)
-        : [(await resolveAccount({})).accountId];
+      const accountIds = args.account_ids ?? [(await resolveAccount({})).accountId];
       const docs = await billing.getBillingDocumentsInfo(
         accountIds,
-        String(args.start_date),
-        String(args.end_date),
+        args.start_date,
+        args.end_date,
       );
       return {
         account_ids: accountIds,
         ...collectionEnvelope("billing_documents", docs, {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         }),
       };
     },

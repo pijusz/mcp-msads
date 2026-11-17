@@ -1,12 +1,7 @@
-import type { AccountIds } from "@/services/campaigns";
-import { msadsFetch } from "@/services/msads-api";
+import { batchWrite, type EntitySpec } from "@/services/batch-write";
+import { msadsFetch, type Scope } from "@/services/msads-api";
 import { hashBatch } from "@/services/pii";
-import {
-  assertBatchLimit,
-  BATCH_LIMITS,
-  type BatchResult,
-  mapBatchResult,
-} from "@/utils/batch";
+import { BATCH_LIMITS, type BatchResult } from "@/utils/batch";
 import { type MsAdsBatchError, MsAdsError, readPartialErrors } from "@/utils/errors";
 
 /**
@@ -53,7 +48,7 @@ export function assertCreatableAudience(type: unknown): void {
 }
 
 export async function getAudiencesByIds(
-  ids: AccountIds,
+  ids: Scope,
   audienceIds?: string[],
   type?: string,
 ): Promise<Record<string, unknown>[]> {
@@ -72,83 +67,60 @@ export async function getAudiencesByIds(
   return res.Audiences ?? [];
 }
 
-export async function addAudiences(
-  ids: AccountIds,
-  audiences: Record<string, unknown>[],
-): Promise<BatchResult> {
-  assertBatchLimit(audiences, BATCH_LIMITS.audiences, "audiences");
-  for (const a of audiences) assertCreatableAudience(a.Type);
-
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    "Audiences",
-    { method: "POST", body: { Audiences: audiences }, ...ids },
-  );
-  return mapBatchResult(
-    res,
-    "AudienceIds",
-    audiences.map((a) => String(a.Name ?? "")),
-    audiences.length,
-  );
-}
-
-export async function updateAudiences(
-  ids: AccountIds,
-  audiences: Record<string, unknown>[],
-): Promise<BatchResult> {
-  assertBatchLimit(audiences, BATCH_LIMITS.audiences, "audiences");
-  for (const audience of audiences) {
-    if (
-      typeof audience.Type !== "string" ||
-      !(UPDATEABLE_AUDIENCE_TYPES as readonly string[]).includes(audience.Type)
-    ) {
+function assertUpdatableAudience(audience: Record<string, unknown>): void {
+  if (
+    typeof audience.Type !== "string" ||
+    !(UPDATEABLE_AUDIENCE_TYPES as readonly string[]).includes(audience.Type)
+  ) {
+    throw new MsAdsError({
+      message:
+        `Audience ${String(audience.Id ?? "update")} needs Type set to an updateable family: ` +
+        UPDATEABLE_AUDIENCE_TYPES.join(", ") +
+        ".",
+    });
+  }
+  if (audience.Type === "CustomAudience") {
+    const unsupported = Object.keys(audience).filter(
+      (field) => !["Id", "Type", "Name", "Description"].includes(field),
+    );
+    if (unsupported.length > 0) {
       throw new MsAdsError({
-        message:
-          `Audience ${String(audience.Id ?? "update")} needs Type set to an updateable family: ` +
-          UPDATEABLE_AUDIENCE_TYPES.join(", ") +
-          ".",
+        message: `CustomAudience updates only support Name and Description; remove ${unsupported.join(", ")}.`,
       });
     }
-    if (audience.Type === "CustomAudience") {
-      const unsupported = Object.keys(audience).filter(
-        (field) => !["Id", "Type", "Name", "Description"].includes(field),
-      );
-      if (unsupported.length > 0) {
-        throw new MsAdsError({
-          message: `CustomAudience updates only support Name and Description; remove ${unsupported.join(", ")}.`,
-        });
-      }
-    }
   }
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    "Audiences",
-    { method: "PUT", body: { Audiences: audiences }, ...ids },
-  );
-  return mapBatchResult(
-    { AudienceIds: audiences.map((a) => a.Id ?? null), ...res },
-    "AudienceIds",
-    audiences.map((a) => String(a.Name ?? a.Id ?? "")),
-    audiences.length,
-  );
 }
 
-export async function deleteAudiences(
-  ids: AccountIds,
-  audienceIds: string[],
+const AUDIENCES: EntitySpec = {
+  path: "Audiences",
+  list: "Audiences",
+  idField: "AudienceIds",
+  limit: BATCH_LIMITS.audiences,
+  what: "audiences",
+  toWire(audience, op) {
+    if (op === "add") assertCreatableAudience(audience.Type);
+    else assertUpdatableAudience(audience);
+    return audience;
+  },
+  label: (a, op) => String(op === "add" ? (a.Name ?? "") : (a.Name ?? a.Id ?? "")),
+};
+
+export function addAudiences(
+  ids: Scope,
+  audiences: Record<string, unknown>[],
 ): Promise<BatchResult> {
-  assertBatchLimit(audienceIds, BATCH_LIMITS.audiences, "audiences");
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    "Audiences",
-    { method: "DELETE", body: { AudienceIds: audienceIds }, ...ids },
-  );
-  return mapBatchResult(
-    { AudienceIds: audienceIds, ...res },
-    "AudienceIds",
-    audienceIds,
-    audienceIds.length,
-  );
+  return batchWrite(AUDIENCES, "add", ids, undefined, audiences);
+}
+
+export function updateAudiences(
+  ids: Scope,
+  audiences: Record<string, unknown>[],
+): Promise<BatchResult> {
+  return batchWrite(AUDIENCES, "update", ids, undefined, audiences);
+}
+
+export function deleteAudiences(ids: Scope, audienceIds: string[]): Promise<BatchResult> {
+  return batchWrite(AUDIENCES, "delete", ids, undefined, audienceIds);
 }
 
 /** Max identifiers per customer-list call. */
@@ -189,7 +161,7 @@ export interface CustomerListResult {
  * headless server means an unpredictable error 8003.
  */
 export async function applyCustomerList(
-  ids: AccountIds,
+  ids: Scope,
   upload: CustomerListUpload,
 ): Promise<CustomerListResult> {
   if (upload.emails.length === 0) {

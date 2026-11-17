@@ -1,5 +1,4 @@
-import type { AccountIds } from "@/services/campaigns";
-import { msadsFetch } from "@/services/msads-api";
+import { msadsFetch, type Scope } from "@/services/msads-api";
 import { MsAdsError } from "@/utils/errors";
 
 /**
@@ -131,7 +130,7 @@ export function validateKeywordIdeasInput(input: KeywordIdeasInput): void {
 }
 
 export async function getKeywordIdeas(
-  ids: AccountIds,
+  ids: Scope,
   input: KeywordIdeasInput,
 ): Promise<Record<string, unknown>[]> {
   validateKeywordIdeasInput(input);
@@ -176,7 +175,7 @@ export interface TrafficEstimateInput {
  * for a bare keyword list, so the nesting is assembled here.
  */
 export async function getKeywordTrafficEstimates(
-  ids: AccountIds,
+  ids: Scope,
   input: TrafficEstimateInput,
 ): Promise<Record<string, unknown>[]> {
   if (!input.keywords?.length) {
@@ -267,7 +266,7 @@ export async function getKeywordTrafficEstimates(
 
 /** `SuggestKeywordsForUrl` — note the resource is `KeywordSuggestions`. */
 export async function suggestKeywordsForUrl(
-  ids: AccountIds,
+  ids: Scope,
   url: string,
   maxKeywords = 50,
   language?: string,
@@ -329,7 +328,7 @@ const DEFAULT_SEARCH_COUNT_DEVICES = ["Computers", "Smartphones", "Tablets"];
  * and the request has no Network element.
  */
 export async function getHistoricalSearchCount(
-  ids: AccountIds,
+  ids: Scope,
   keywords: string[],
   input: {
     /** ISO country codes, e.g. ["US"] — not the numeric location ids. */
@@ -373,7 +372,7 @@ export async function getHistoricalSearchCount(
 
 /** `GetBidLandscapeByKeywordIds` — estimated stats at a range of bids. */
 export async function getBidLandscape(
-  ids: AccountIds,
+  ids: Scope,
   keywordIds: string[],
   includeCurrentBid = true,
 ): Promise<Record<string, unknown>[]> {
@@ -396,7 +395,7 @@ export async function getBidLandscape(
 
 /** `GetAuctionInsightData` — who else is competing in your auctions. */
 export async function getAuctionInsight(
-  ids: AccountIds,
+  ids: Scope,
   entityType: string,
   entityIds: string[],
   startDate: { Day: number; Month: number; Year: number },

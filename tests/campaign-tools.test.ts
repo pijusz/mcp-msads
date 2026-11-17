@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toMsDate } from "@/services/reporting";
+import { toMsDate } from "@/utils/dates";
 
 /**
  * The campaign tools accept ISO date strings and convert on the way out, so a

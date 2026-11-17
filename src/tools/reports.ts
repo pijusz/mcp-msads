@@ -12,7 +12,7 @@ import {
   type RunReportResult,
   runReport,
 } from "@/services/reporting";
-import { ACCOUNT_ARGS } from "@/tools/_shared";
+import { ACCOUNT_ARGS, ID } from "@/tools/_shared";
 import {
   COLLECTION_LIMIT,
   collectionEnvelope,
@@ -105,12 +105,15 @@ const MAX_ROWS = COLLECTION_LIMIT.describe(
   `Row ceiling for the returned payload. Default ${DEFAULT_MAX_ROWS}.`,
 );
 
-function shapeOptionsFrom(args: Record<string, unknown>): ShapeOptions {
-  const cols = args.columns;
+function shapeOptionsFrom(args: {
+  format?: "tsv" | "json";
+  max_rows?: number;
+  columns?: string[];
+}): ShapeOptions {
   return {
     format: args.format === "json" ? "json" : "tsv",
-    maxRows: Number(args.max_rows ?? DEFAULT_MAX_ROWS),
-    ...(Array.isArray(cols) ? { columns: cols.map(String) } : {}),
+    maxRows: args.max_rows ?? DEFAULT_MAX_ROWS,
+    ...(args.columns ? { columns: args.columns } : {}),
   };
 }
 
@@ -155,7 +158,7 @@ export function registerReportTools(server: McpServer): void {
           };
         }),
         {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
           total: REPORT_TYPE_NAMES.length,
         },
       ),
@@ -194,30 +197,27 @@ export function registerReportTools(server: McpServer): void {
           "Report time zone, e.g. PacificTimeUSCanadaTijuana. Only sets which day 'today' means; values are always UTC.",
         ),
       campaign_ids: z
-        .array(z.string())
+        .array(ID)
         .max(300)
         .optional()
         .describe("Narrow to these campaigns (max 300)."),
       ad_group_ids: z
-        .array(z.string())
+        .array(ID)
         .max(300)
         .optional()
         .describe(
           "Narrow to these ad groups (max 300). Pass their parent campaign as campaign_id.",
         ),
-      campaign_id: z
-        .string()
-        .optional()
-        .describe(
-          "Parent campaign of ad_group_ids / asset_group_ids, sent as CampaignId in each scope entry. A single campaign_ids entry is used the same way.",
-        ),
+      campaign_id: ID.optional().describe(
+        "Parent campaign of ad_group_ids / asset_group_ids, sent as CampaignId in each scope entry. A single campaign_ids entry is used the same way.",
+      ),
       asset_group_ids: z
-        .array(z.string())
+        .array(ID)
         .max(100)
         .optional()
         .describe("Narrow asset-group reports to these asset groups (max 100)."),
       account_ids: z
-        .array(z.string())
+        .array(ID)
         .max(1000)
         .optional()
         .describe("Report across several accounts at once (max 1000)."),
@@ -240,43 +240,33 @@ export function registerReportTools(server: McpServer): void {
       const ids = await resolveAccount(args);
 
       const scope = {
-        ...(Array.isArray(args.account_ids)
-          ? { accountIds: args.account_ids.map(String) }
-          : {}),
-        ...(Array.isArray(args.campaign_ids)
-          ? { campaignIds: args.campaign_ids.map(String) }
-          : {}),
-        ...(Array.isArray(args.ad_group_ids)
-          ? { adGroupIds: args.ad_group_ids.map(String) }
-          : {}),
-        ...(Array.isArray(args.asset_group_ids)
-          ? { assetGroupIds: args.asset_group_ids.map(String) }
-          : {}),
-        ...(args.campaign_id ? { campaignId: String(args.campaign_id) } : {}),
+        ...(args.account_ids ? { accountIds: args.account_ids } : {}),
+        ...(args.campaign_ids ? { campaignIds: args.campaign_ids } : {}),
+        ...(args.ad_group_ids ? { adGroupIds: args.ad_group_ids } : {}),
+        ...(args.asset_group_ids ? { assetGroupIds: args.asset_group_ids } : {}),
+        ...(args.campaign_id ? { campaignId: args.campaign_id } : {}),
       };
 
       const result = await runReport(
         {
-          reportType: String(args.report_type),
+          reportType: args.report_type,
           accountId: ids.accountId,
-          ...(Array.isArray(args.columns) ? { columns: args.columns.map(String) } : {}),
-          ...(args.aggregation ? { aggregation: args.aggregation as never } : {}),
-          ...(args.predefined_time
-            ? { predefinedTime: args.predefined_time as never }
-            : {}),
-          ...(args.start_date ? { startDate: String(args.start_date) } : {}),
-          ...(args.end_date ? { endDate: String(args.end_date) } : {}),
-          ...(args.time_zone ? { timeZone: String(args.time_zone) } : {}),
-          ...(args.filter ? { filter: args.filter as Record<string, unknown> } : {}),
+          ...(args.columns ? { columns: args.columns } : {}),
+          ...(args.aggregation ? { aggregation: args.aggregation } : {}),
+          ...(args.predefined_time ? { predefinedTime: args.predefined_time } : {}),
+          ...(args.start_date ? { startDate: args.start_date } : {}),
+          ...(args.end_date ? { endDate: args.end_date } : {}),
+          ...(args.time_zone ? { timeZone: args.time_zone } : {}),
+          ...(args.filter ? { filter: args.filter } : {}),
           ...(args.report_type === "keyword_performance" || args.max_rows !== undefined
-            ? { maxRows: Number(args.max_rows ?? DEFAULT_MAX_ROWS) }
+            ? { maxRows: args.max_rows ?? DEFAULT_MAX_ROWS }
             : {}),
           scope,
         },
         ids,
         {
-          ...(args.timeout_ms ? { timeoutMs: Number(args.timeout_ms) } : {}),
-          maxRows: Number(args.max_rows ?? DEFAULT_MAX_ROWS),
+          ...(args.timeout_ms ? { timeoutMs: args.timeout_ms } : {}),
+          maxRows: args.max_rows ?? DEFAULT_MAX_ROWS,
         },
       );
 
@@ -304,10 +294,10 @@ export function registerReportTools(server: McpServer): void {
     handler: async (args) => {
       const ids = await resolveAccount(args);
       const result = await getSubmittedReport(
-        String(args.report_request_id),
+        args.report_request_id,
         ids,
         "Csv",
-        Number(args.max_rows ?? DEFAULT_MAX_ROWS),
+        args.max_rows ?? DEFAULT_MAX_ROWS,
       );
       return {
         account_id: ids.accountId,

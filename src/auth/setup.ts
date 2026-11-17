@@ -359,8 +359,6 @@ export async function runSetup(argv: string[] = []): Promise<void> {
   const env = loadEnv();
   const sandbox = env.MSADS_ENVIRONMENT === "sandbox";
   const google = env.MSADS_IDENTITY_PROVIDER === "google";
-  // Your own app registration is required in sandbox too.
-  const clientId = env.MSADS_CLIENT_ID;
   const redirectUri = `http://${CALLBACK_HOST}:${port}/callback`;
 
   console.log(
@@ -368,7 +366,7 @@ export async function runSetup(argv: string[] = []): Promise<void> {
       `${google ? "Google" : "Microsoft"} identity)\n`,
   );
 
-  if (google && !clientId) {
+  if (google && !env.MSADS_CLIENT_ID) {
     console.error(
       "  MSADS_CLIENT_ID is not set.\n\n" +
         "  Your Microsoft Advertising account signs in with Google, so the OAuth\n" +
@@ -387,7 +385,8 @@ export async function runSetup(argv: string[] = []): Promise<void> {
     process.exit(1);
   }
 
-  if (!clientId) {
+  // Your own app registration is required in sandbox too.
+  if (!env.MSADS_CLIENT_ID) {
     console.error(
       "  MSADS_CLIENT_ID is not set.\n\n" +
         "  Register an application first:\n" +
@@ -436,7 +435,7 @@ export async function runSetup(argv: string[] = []): Promise<void> {
   const { verifier, challenge } = createPkcePair();
   const state = base64Url(randomBytes(16));
   const authUrl = buildAuthorizeUrl({
-    clientId,
+    clientId: env.MSADS_CLIENT_ID,
     redirectUri,
     challenge,
     state,
@@ -466,7 +465,7 @@ export async function runSetup(argv: string[] = []): Promise<void> {
     code,
     redirectUri,
     codeVerifier: verifier,
-    clientId,
+    clientId: env.MSADS_CLIENT_ID,
     ...(env.MSADS_CLIENT_SECRET ? { clientSecret: env.MSADS_CLIENT_SECRET } : {}),
   });
 
@@ -481,7 +480,7 @@ export async function runSetup(argv: string[] = []): Promise<void> {
   writeTokenFile(outPath, {
     refresh_token: tokens.refreshToken,
     ...(tokens.scope !== undefined ? { scope: tokens.scope } : {}),
-    client_id: clientId,
+    client_id: env.MSADS_CLIENT_ID,
     tenant: env.MSADS_TENANT,
     environment: env.MSADS_ENVIRONMENT,
     updated_at: new Date().toISOString(),
@@ -496,7 +495,7 @@ export async function runSetup(argv: string[] = []): Promise<void> {
   }
   console.log("  Add to your environment:\n");
   console.log(`    MSADS_TOKEN_FILE=${outPath}`);
-  console.log(`    MSADS_CLIENT_ID=${clientId}`);
+  console.log(`    MSADS_CLIENT_ID=${env.MSADS_CLIENT_ID}`);
   if (env.MSADS_CLIENT_SECRET) console.log("    MSADS_CLIENT_SECRET=<your secret>");
   console.log(
     sandbox

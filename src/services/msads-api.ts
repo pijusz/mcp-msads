@@ -9,6 +9,7 @@ import {
   readResponseBytes,
   type SafeHttpDependencies,
   safeFetchBytes,
+  tryParseJsonBytes,
 } from "@/utils/safe-http";
 
 /**
@@ -82,6 +83,22 @@ export function serviceBaseUrl(service: ServiceName): string {
     : "api.bingads.microsoft.com";
   return `https://${spec.host}.${domain}/${spec.prefix}`;
 }
+
+/**
+ * Whether a hostname is under bingads.microsoft.com (callers enforce HTTPS).
+ * Used for the bulk upload URL, which is not guaranteed to be on the Bulk
+ * service host (upload URLs have historically lived on a separate file-upload
+ * host), so pinning to bulk.api.* would break every upload. Still
+ * Microsoft-only, and checked on every redirect, since that request carries
+ * the access token.
+ */
+export function isMicrosoftAdsHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "bingads.microsoft.com" || host.endsWith(".bingads.microsoft.com");
+}
+
+/** The ad account (and its manager customer) a call is made on behalf of. */
+export type Scope = { accountId: string; customerId?: string };
 
 export interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
@@ -191,38 +208,35 @@ export function retryAfterMs(headers: Headers): number | null {
   return null;
 }
 
-async function readBody(res: Response): Promise<unknown> {
-  const bytes = await readResponseBytes(res, MAX_API_RESPONSE_BYTES);
-  const contentType = res.headers.get("content-type") ?? "";
-  return contentType.includes("json")
-    ? parseJsonBytes(bytes)
-    : new TextDecoder().decode(bytes);
-}
-
 /**
- * Parse a 2xx body. An empty body is a legitimate `{}` (several deletes return
- * nothing), but a non-empty body that is not JSON must not masquerade as an
- * empty success — a write would look as if it had no partial errors.
+ * Read a response body.
+ *
+ * `strict` is for 2xx bodies: an empty body is a legitimate `{}` (several
+ * deletes return nothing), but a non-empty body that is not JSON must not
+ * masquerade as an empty success — a write would look as if it had no partial
+ * errors. Error bodies are parsed leniently and handed to parseApiError.
  */
-async function readSuccessBody(
+async function readBody(
   res: Response,
-  service: ServiceName,
-  path: string,
+  strict?: { service: ServiceName; path: string },
 ): Promise<unknown> {
   const bytes = await readResponseBytes(res, MAX_API_RESPONSE_BYTES);
-  const text = new TextDecoder().decode(bytes);
-  if (text.trim() === "") return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new MsAdsError({
-      status: res.status,
-      message:
-        `${service} ${path} returned HTTP ${res.status} with a body that is not valid JSON ` +
-        `(${bytes.byteLength} bytes, content-type "${res.headers.get("content-type") ?? "none"}"). ` +
-        "The outcome of the operation is unknown; check the entities before retrying a write.",
-    });
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!strict) {
+    return contentType.includes("json")
+      ? parseJsonBytes(bytes)
+      : new TextDecoder().decode(bytes);
   }
+  const parsed = tryParseJsonBytes(bytes);
+  if (parsed.kind === "json") return parsed.value;
+  if (parsed.kind === "empty") return {};
+  throw new MsAdsError({
+    status: res.status,
+    message:
+      `${strict.service} ${strict.path} returned HTTP ${res.status} with a body that is not valid JSON ` +
+      `(${bytes.byteLength} bytes, content-type "${res.headers.get("content-type") ?? "none"}"). ` +
+      "The outcome of the operation is unknown; check the entities before retrying a write.",
+  });
 }
 
 /**
@@ -250,6 +264,9 @@ export async function msadsFetch<T>(
   const retryBudget = opts.retry === "safe" ? retries : 0;
 
   const url = `${serviceBaseUrl(service)}/${path.replace(/^\/+/, "")}`;
+  // Serialized once, outside the network-error handler: a body that cannot be
+  // serialized is a caller bug, not something a retry can fix.
+  const payload = body === undefined ? undefined : JSON.stringify(body);
   let refreshedOnce = false;
   let lastError: MsAdsError | undefined;
 
@@ -263,42 +280,18 @@ export async function msadsFetch<T>(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
 
+    // Only the transport — the request and the body read — is inside the
+    // handler, so anything it catches that is not an MsAdsError is a network
+    // failure or timeout. The timer stays armed until the body has been read:
+    // fetch resolves when the HEADERS arrive, and a server that then stalls
+    // mid-body would otherwise hang forever.
+    let res: Response;
+    let data: unknown;
     try {
       const init: RequestInit = { method, headers, signal: controller.signal };
-      if (body !== undefined) init.body = JSON.stringify(body);
-
-      const res = await fetch(url, init);
-      // NOTE: the timer is deliberately NOT cleared here. fetch resolves when
-      // the HEADERS arrive; a server that then stalls mid-body would hang
-      // forever with the abort already disarmed. It is cleared in `finally`.
-      if (res.ok) {
-        return (await readSuccessBody(res, service, path)) as T;
-      }
-
-      const err = parseApiError(res.status, await readBody(res));
-      lastError = err;
-
-      // 109 means the token died earlier than our clock predicted. Refresh and
-      // replay once — this is exactly what Microsoft's own SDKs do.
-      if (err.has(ErrorCode.AuthenticationTokenExpired) && !refreshedOnce) {
-        refreshedOnce = true;
-        invalidateAccessToken();
-        log.info("Access token expired (109) — refreshing and retrying once");
-        attempt--; // the replay shouldn't consume the throttling retry budget
-        continue;
-      }
-
-      if (attempt < retryBudget && shouldRetry(res.status, err)) {
-        const delay = retryAfterMs(res.headers) ?? retryDelayMs(attempt, err);
-        log.warn(
-          `${service} ${path} → HTTP ${res.status} (${err.message}); retrying in ${delay}ms ` +
-            `(attempt ${attempt + 1}/${retryBudget})`,
-        );
-        await sleep(delay);
-        continue;
-      }
-
-      throw err;
+      if (payload !== undefined) init.body = payload;
+      res = await fetch(url, init);
+      data = await readBody(res, res.ok ? { service, path } : undefined);
     } catch (err) {
       if (err instanceof MsAdsError) throw err;
 
@@ -320,6 +313,33 @@ export async function msadsFetch<T>(
     } finally {
       clearTimeout(timer);
     }
+
+    if (res.ok) return data as T;
+
+    const err = parseApiError(res.status, data);
+    lastError = err;
+
+    // 109 means the token died earlier than our clock predicted. Refresh and
+    // replay once — this is exactly what Microsoft's own SDKs do.
+    if (err.has(ErrorCode.AuthenticationTokenExpired) && !refreshedOnce) {
+      refreshedOnce = true;
+      invalidateAccessToken();
+      log.info("Access token expired (109) — refreshing and retrying once");
+      attempt--; // the replay shouldn't consume the throttling retry budget
+      continue;
+    }
+
+    if (attempt < retryBudget && shouldRetry(res.status, err)) {
+      const delay = retryAfterMs(res.headers) ?? retryDelayMs(attempt, err);
+      log.warn(
+        `${service} ${path} → HTTP ${res.status} (${err.message}); retrying in ${delay}ms ` +
+          `(attempt ${attempt + 1}/${retryBudget})`,
+      );
+      await sleep(delay);
+      continue;
+    }
+
+    throw err;
   }
 
   throw lastError ?? new MsAdsError({ message: `${service} ${path} failed` });

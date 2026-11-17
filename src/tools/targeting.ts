@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as tg from "@/services/targeting";
-import { ACCOUNT_ARGS, ids, WRITE } from "@/tools/_shared";
+import { ACCOUNT_ARGS, ID, ids, WRITE } from "@/tools/_shared";
 import {
   COLLECTION_LIMIT,
   collectionEnvelope,
@@ -52,7 +52,7 @@ export function registerTargetingTools(server: McpServer): void {
           "Specific type to read: Age, Gender, Device, DayTime, Location, LocationIntent, Radius, CompanyName, Industry, JobFunction, RemarketingList, CustomAudience, InMarketAudience, Placement, Topic.",
         ),
       criterion_ids: z
-        .array(z.string())
+        .array(ID)
         .max(MAX_COLLECTION_LIMIT)
         .optional()
         .describe("Specific ids; omit for every criterion of this type under parent_id."),
@@ -62,13 +62,13 @@ export function registerTargetingTools(server: McpServer): void {
       const scope = await ids(args);
       const criterions = await tg.getCriterions(
         scope,
-        args.level as tg.CriterionLevel,
-        String(args.parent_id),
-        Array.isArray(args.criterion_ids) ? args.criterion_ids.map(String) : null,
-        String(args.criterion_type),
+        args.level,
+        args.parent_id,
+        args.criterion_ids ?? null,
+        args.criterion_type,
       );
       return collectionEnvelope("criterions", criterions, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -105,13 +105,9 @@ Day/time criterion fields cannot be edited after creation; to change a schedule,
         )
         .min(1),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return tg.addCriterions(
-        scope,
-        args.level as tg.CriterionLevel,
-        args.criterions as Record<string, unknown>[],
-      );
+      return tg.addCriterions(scope, args.level, args.criterions);
     }),
   );
 
@@ -128,7 +124,7 @@ Day/time criterion fields are immutable; delete and re-add to change a schedule.
         .array(
           z
             .object({
-              Id: z.string(),
+              Id: ID,
               Type: z.string(),
               Criterion: z.record(z.string(), z.unknown()),
             })
@@ -136,13 +132,9 @@ Day/time criterion fields are immutable; delete and re-add to change a schedule.
         )
         .min(1),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return tg.updateCriterions(
-        scope,
-        args.level as tg.CriterionLevel,
-        args.criterions as Record<string, unknown>[],
-      );
+      return tg.updateCriterions(scope, args.level, args.criterions);
     }),
   );
 
@@ -154,21 +146,21 @@ Day/time criterion fields are immutable; delete and re-add to change a schedule.
       ...ACCOUNT_ARGS,
       level: LEVEL,
       parent_id: PARENT_ID,
-      criterion_ids: z.array(z.string()).min(1),
+      criterion_ids: z.array(ID).min(1),
       criterion_type: z
         .enum(tg.DELETE_CRITERION_TYPES)
         .describe(
           "Specific read type of the criterions being removed, e.g. Age or RemarketingList. It is mapped to the required write family.",
         ),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
       return tg.deleteCriterions(
         scope,
-        args.level as tg.CriterionLevel,
-        String(args.parent_id),
-        (args.criterion_ids as string[]).map(String),
-        String(args.criterion_type),
+        args.level,
+        args.parent_id,
+        args.criterion_ids,
+        args.criterion_type,
       );
     }),
   );
@@ -191,11 +183,11 @@ Day/time criterion fields are immutable; delete and re-add to change a schedule.
       const scope = await ids(args);
       const companies = await tg.searchCompanies(
         scope,
-        String(args.company_name),
-        args.language_locale ? String(args.language_locale) : "en",
+        args.company_name,
+        args.language_locale || "en",
       );
       return collectionEnvelope("companies", companies, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -217,8 +209,8 @@ Day/time criterion fields are immutable; delete and re-add to change a schedule.
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const locale = args.language_locale ? String(args.language_locale) : "en";
-      const file = String(args.file);
+      const locale = args.language_locale || "en";
+      const file = args.file;
 
       if (file === "geo_locations") {
         return {

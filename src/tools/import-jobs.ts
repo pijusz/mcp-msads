@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as imp from "@/services/import-jobs";
-import { ACCOUNT_ARGS, ids, WRITE } from "@/tools/_shared";
+import { ACCOUNT_ARGS, ID, ids, WRITE } from "@/tools/_shared";
 import {
   COLLECTION_LIMIT,
   collectionEnvelope,
@@ -10,7 +10,7 @@ import {
 } from "@/utils/collection";
 import { defineRead } from "@/utils/define-read";
 import { MsAdsError } from "@/utils/errors";
-import { destructiveTool, writeTool } from "@/utils/register-tool";
+import { destructiveTool, type ToolArgs, writeTool } from "@/utils/register-tool";
 import { run } from "@/utils/tool-response";
 
 const GOOGLE_IMPORT_ARGS = {
@@ -65,10 +65,9 @@ Prerequisite you must obtain manually: ${imp.CREDENTIAL_HELP}
 Scheduling — frequency_type is Scheduling, Auto, or RunNow. Daily, weekly, and monthly are all "Scheduling" with different six-field cron expressions whose minute is 0. Omit frequency_type to run once now.`;
 
 function createImportHandler(mirrorDeletions: boolean) {
-  return run(async (args: Record<string, unknown>) => {
+  return run(async (args: ToolArgs<typeof GOOGLE_IMPORT_ARGS>) => {
     const scope = await ids(args);
-    const extraOptions =
-      (args.import_option as Record<string, unknown> | undefined) ?? {};
+    const extraOptions = args.import_option ?? {};
     const reserved = Object.keys(extraOptions).find((key) =>
       ["deleteremovedentities", "newpausedcampaignsandchildentities"].includes(
         key.toLowerCase(),
@@ -85,30 +84,28 @@ function createImportHandler(mirrorDeletions: boolean) {
       NewPausedCampaignsAndChildEntities: args.new_paused_campaigns !== false,
       DeleteRemovedEntities: mirrorDeletions,
       ...(args.budget_adjustment_percent !== undefined
-        ? { AdjustmentForCampaignBudgets: Number(args.budget_adjustment_percent) }
+        ? { AdjustmentForCampaignBudgets: args.budget_adjustment_percent }
         : {}),
       ...(args.bid_adjustment_percent !== undefined
-        ? { AdjustmentForBids: Number(args.bid_adjustment_percent) }
+        ? { AdjustmentForBids: args.bid_adjustment_percent }
         : {}),
     };
 
     return imp.addImportJob(scope, {
-      name: String(args.name),
-      credentialId: String(args.credential_id),
-      googleAccountId: String(args.google_account_id),
+      name: args.name,
+      credentialId: args.credential_id,
+      googleAccountId: args.google_account_id,
       ...(args.frequency_type
         ? {
             frequency: {
-              type: String(args.frequency_type),
-              ...(args.cron ? { cron: String(args.cron) } : {}),
-              ...(args.time_zone ? { timeZone: String(args.time_zone) } : {}),
+              type: args.frequency_type,
+              ...(args.cron ? { cron: args.cron } : {}),
+              ...(args.time_zone ? { timeZone: args.time_zone } : {}),
             },
           }
         : {}),
       importOption,
-      ...(args.notification_email
-        ? { notificationEmail: String(args.notification_email) }
-        : {}),
+      ...(args.notification_email ? { notificationEmail: args.notification_email } : {}),
       ...(args.notification_type
         ? {
             notificationType: args.notification_type as
@@ -133,7 +130,7 @@ export function registerImportTools(server: McpServer): void {
     inputSchema: {
       ...ACCOUNT_ARGS,
       job_ids: z
-        .array(z.string())
+        .array(ID)
         .max(MAX_COLLECTION_LIMIT)
         .optional()
         .describe("Specific ids; omit for all."),
@@ -141,12 +138,9 @@ export function registerImportTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const jobs = await imp.getImportJobs(
-        scope,
-        Array.isArray(args.job_ids) ? args.job_ids.map(String) : undefined,
-      );
+      const jobs = await imp.getImportJobs(scope, args.job_ids);
       return collectionEnvelope("import_jobs", jobs, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -160,17 +154,17 @@ export function registerImportTools(server: McpServer): void {
       "One result per run, so a weekly job returns one row per week. Only the last 90 days are retained, and a job scheduled for the future returns nothing yet.",
     inputSchema: {
       ...ACCOUNT_ARGS,
-      job_ids: z.array(z.string()).max(MAX_COLLECTION_LIMIT).optional(),
+      job_ids: z.array(ID).max(MAX_COLLECTION_LIMIT).optional(),
       page_index: z.number().int().min(0).optional(),
       page_size: z.number().int().min(1).max(1000).optional().describe("Default 200."),
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const pageIndex = Number(args.page_index ?? 0);
-      const pageSize = Number(args.page_size ?? DEFAULT_COLLECTION_LIMIT);
+      const pageIndex = args.page_index ?? 0;
+      const pageSize = args.page_size ?? DEFAULT_COLLECTION_LIMIT;
       const results = await imp.getImportResults(
         scope,
-        Array.isArray(args.job_ids) ? args.job_ids.map(String) : undefined,
+        args.job_ids,
         pageIndex,
         pageSize,
       );
@@ -207,11 +201,11 @@ export function registerImportTools(server: McpServer): void {
     `${WRITE}Delete Google Ads import jobs, stopping future scheduled runs. Campaigns already imported are NOT removed — they stay and simply stop being synced. Past import results remain retrievable by job id.`,
     {
       ...ACCOUNT_ARGS,
-      job_ids: z.array(z.string()).min(1),
+      job_ids: z.array(ID).min(1),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return imp.deleteImportJobs(scope, (args.job_ids as string[]).map(String));
+      return imp.deleteImportJobs(scope, args.job_ids);
     }),
   );
 
@@ -237,12 +231,12 @@ export function registerImportTools(server: McpServer): void {
       const scope = await ids(args);
       const mapping = await imp.getImportEntityIdsMapping(
         scope,
-        String(args.entity_type),
-        (args.source_entity_ids as string[]).map(String),
-        args.source_parent_id ? String(args.source_parent_id) : undefined,
+        args.entity_type,
+        args.source_entity_ids,
+        args.source_parent_id,
       );
       return collectionEnvelope("entity_ids_mapping", mapping, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });

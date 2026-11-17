@@ -1,9 +1,11 @@
-import type { AccountIds } from "@/services/campaigns";
-import { msadsFetch } from "@/services/msads-api";
+import { batchWrite, type EntitySpec } from "@/services/batch-write";
+import { validateNegativeMatchType } from "@/services/guardrails";
+import { msadsFetch, type Scope } from "@/services/msads-api";
 import {
   assertBatchLimit,
   BATCH_LIMITS,
   type BatchResult,
+  chunk,
   mapBatchResult,
 } from "@/utils/batch";
 import { MsAdsError, readPartialErrors } from "@/utils/errors";
@@ -72,7 +74,7 @@ export const AD_EXTENSION_TYPES = [
  * not associations. Omit `associationType` to include unassociated extensions.
  */
 export async function getAdExtensionIds(
-  ids: AccountIds,
+  ids: Scope,
   extensionType: string,
   associationType?: string,
 ): Promise<string[]> {
@@ -94,19 +96,19 @@ export async function getAdExtensionIds(
 }
 
 export async function getAdExtensionsByIds(
-  ids: AccountIds,
+  ids: Scope,
   extensionIds: string[],
   extensionType: string,
 ): Promise<Record<string, unknown>[]> {
   const extensions: Record<string, unknown>[] = [];
-  for (let start = 0; start < extensionIds.length; start += BATCH_LIMITS.adExtensions) {
+  for (const batch of chunk(extensionIds, BATCH_LIMITS.adExtensions)) {
     const res = await msadsFetch<{ AdExtensions?: Record<string, unknown>[] }>(
       "CampaignManagement",
       "AdExtensions/QueryByIds",
       {
         body: {
           AccountId: ids.accountId,
-          AdExtensionIds: extensionIds.slice(start, start + BATCH_LIMITS.adExtensions),
+          AdExtensionIds: batch,
           AdExtensionType: extensionType,
         },
         ...ids,
@@ -118,78 +120,44 @@ export async function getAdExtensionsByIds(
   return extensions;
 }
 
-export async function addAdExtensions(
-  ids: AccountIds,
-  extensions: Record<string, unknown>[],
-): Promise<BatchResult> {
-  assertBatchLimit(extensions, BATCH_LIMITS.adExtensions, "ad extensions");
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    "AdExtensions",
-    {
-      method: "POST",
-      body: { AccountId: ids.accountId, AdExtensions: extensions },
-      ...ids,
-    },
-  );
+const AD_EXTENSIONS: EntitySpec = {
+  path: "AdExtensions",
+  parent: "AccountId",
+  list: "AdExtensions",
+  idField: "AdExtensionIds",
+  limit: BATCH_LIMITS.adExtensions,
+  what: "ad extensions",
+  label: (e, op) => String(op === "add" ? (e.Type ?? "") : (e.Id ?? "")),
   // AdExtensionIdentities is an array of { Id, Version } objects, not bare ids.
   // Passing it through unflattened stringifies each to "[object Object]", which
   // then cannot be fed to associate_ad_extensions.
-  const identities = Array.isArray(res.AdExtensionIdentities)
-    ? (res.AdExtensionIdentities as Array<{ Id?: unknown } | null>).map(
-        (i) => i?.Id ?? null,
-      )
-    : [];
-  return mapBatchResult(
-    { ...res, AdExtensionIds: identities },
-    "AdExtensionIds",
-    extensions.map((e) => String(e.Type ?? "")),
-    extensions.length,
-  );
-}
+  addedIds: (res) =>
+    Array.isArray(res.AdExtensionIdentities)
+      ? (res.AdExtensionIdentities as Array<{ Id?: unknown } | null>).map(
+          (i) => i?.Id ?? null,
+        )
+      : [],
+};
 
-export async function updateAdExtensions(
-  ids: AccountIds,
+export function addAdExtensions(
+  ids: Scope,
   extensions: Record<string, unknown>[],
 ): Promise<BatchResult> {
-  assertBatchLimit(extensions, BATCH_LIMITS.adExtensions, "ad extensions");
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    "AdExtensions",
-    {
-      method: "PUT",
-      body: { AccountId: ids.accountId, AdExtensions: extensions },
-      ...ids,
-    },
-  );
-  return mapBatchResult(
-    { AdExtensionIds: extensions.map((e) => e.Id ?? null), ...res },
-    "AdExtensionIds",
-    extensions.map((e) => String(e.Id ?? "")),
-    extensions.length,
-  );
+  return batchWrite(AD_EXTENSIONS, "add", ids, undefined, extensions);
 }
 
-export async function deleteAdExtensions(
-  ids: AccountIds,
+export function updateAdExtensions(
+  ids: Scope,
+  extensions: Record<string, unknown>[],
+): Promise<BatchResult> {
+  return batchWrite(AD_EXTENSIONS, "update", ids, undefined, extensions);
+}
+
+export function deleteAdExtensions(
+  ids: Scope,
   extensionIds: string[],
 ): Promise<BatchResult> {
-  assertBatchLimit(extensionIds, BATCH_LIMITS.adExtensions, "ad extensions");
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    "AdExtensions",
-    {
-      method: "DELETE",
-      body: { AccountId: ids.accountId, AdExtensionIds: extensionIds },
-      ...ids,
-    },
-  );
-  return mapBatchResult(
-    { AdExtensionIds: extensionIds, ...res },
-    "AdExtensionIds",
-    extensionIds,
-    extensionIds.length,
-  );
+  return batchWrite(AD_EXTENSIONS, "delete", ids, undefined, extensionIds);
 }
 
 /**
@@ -200,7 +168,7 @@ export async function deleteAdExtensions(
  * associated before any of them serve.
  */
 export async function setAdExtensionAssociations(
-  ids: AccountIds,
+  ids: Scope,
   associations: Record<string, unknown>[],
   associationType: string,
 ): Promise<AssociationResult> {
@@ -222,7 +190,7 @@ export async function setAdExtensionAssociations(
 }
 
 export async function getAdExtensionAssociations(
-  ids: AccountIds,
+  ids: Scope,
   entityIds: string[],
   associationType: string,
   extensionTypes?: string[],
@@ -250,7 +218,7 @@ export async function getAdExtensionAssociations(
 }
 
 export async function deleteAdExtensionAssociations(
-  ids: AccountIds,
+  ids: Scope,
   associations: Record<string, unknown>[],
   associationType: string,
 ): Promise<AssociationResult> {
@@ -278,7 +246,7 @@ export async function deleteAdExtensionAssociations(
 export const NEGATIVE_KEYWORD_LIMIT = 20_000;
 
 export async function getNegativeKeywords(
-  ids: AccountIds,
+  ids: Scope,
   entityIds: string[],
   entityType: "Campaign" | "AdGroup",
   parentCampaignId?: string,
@@ -311,23 +279,14 @@ export async function getNegativeKeywords(
   return res.EntityNegativeKeywords ?? [];
 }
 
-/** Negative keywords accept only these; Broad is not a negative match type. */
-export const NEGATIVE_MATCH_TYPES = ["Exact", "Phrase"] as const;
-
 export async function addNegativeKeywords(
-  ids: AccountIds,
+  ids: Scope,
   entityId: string,
   entityType: "Campaign" | "AdGroup",
   keywords: Array<{ Text: string; MatchType: string }>,
 ): Promise<BatchResult> {
   assertBatchLimit(keywords, NEGATIVE_KEYWORD_LIMIT, "negative keywords");
-  for (const k of keywords) {
-    if (!(NEGATIVE_MATCH_TYPES as readonly string[]).includes(k.MatchType)) {
-      throw new MsAdsError({
-        message: `Invalid negative keyword match type "${k.MatchType}" for "${k.Text}". Negative keywords support only ${NEGATIVE_MATCH_TYPES.join(" and ")}.`,
-      });
-    }
-  }
+  for (const k of keywords) validateNegativeMatchType(k.MatchType, k.Text);
   const res = await msadsFetch<Record<string, unknown>>(
     "CampaignManagement",
     "EntityNegativeKeywords",
@@ -362,7 +321,7 @@ export async function addNegativeKeywords(
 }
 
 export async function deleteNegativeKeywords(
-  ids: AccountIds,
+  ids: Scope,
   entityId: string,
   entityType: "Campaign" | "AdGroup",
   keywordIds: string[],
@@ -401,7 +360,7 @@ export async function deleteNegativeKeywords(
  * ------------------------------------------------------------------ */
 
 export async function getLabels(
-  ids: AccountIds,
+  ids: Scope,
   labelIds?: string[],
   pageIndex = 0,
   pageSize = 200,
@@ -421,26 +380,24 @@ export async function getLabels(
   return res.Labels ?? [];
 }
 
-export async function addLabels(
-  ids: AccountIds,
+const LABELS: EntitySpec = {
+  path: "Labels",
+  list: "Labels",
+  idField: "LabelIds",
+  limit: BATCH_LIMITS.labels,
+  what: "labels",
+  label: (l) => String(l.Name ?? ""),
+};
+
+export function addLabels(
+  ids: Scope,
   labels: Record<string, unknown>[],
 ): Promise<BatchResult> {
-  assertBatchLimit(labels, BATCH_LIMITS.labels, "labels");
-  const res = await msadsFetch<Record<string, unknown>>("CampaignManagement", "Labels", {
-    method: "POST",
-    body: { Labels: labels },
-    ...ids,
-  });
-  return mapBatchResult(
-    res,
-    "LabelIds",
-    labels.map((l) => String(l.Name ?? "")),
-    labels.length,
-  );
+  return batchWrite(LABELS, "add", ids, undefined, labels);
 }
 
 export async function setLabelAssociations(
-  ids: AccountIds,
+  ids: Scope,
   associations: Record<string, unknown>[],
   entityType: string,
 ): Promise<AssociationResult> {

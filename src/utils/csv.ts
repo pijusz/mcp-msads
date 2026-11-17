@@ -142,6 +142,11 @@ function readMetadataLine(row: string[]): [string, string] | null {
   return [cell.slice(0, colon).trim(), cell.slice(colon + 1).trim()];
 }
 
+/** Microsoft's trailing line, e.g. "©2026 Microsoft Corporation. All rights reserved." */
+function isCopyrightFooter(cell: string): boolean {
+  return /microsoft corporation\.?\s*all rights reserved/i.test(cell);
+}
+
 /**
  * Parse a downloaded Microsoft Advertising report.
  *
@@ -149,11 +154,6 @@ function readMetadataLine(row: string[]): [string, string] | null {
  * / ExcludeReportFooter flags, so a caller that flips them does not also have
  * to change how it reads the result.
  */
-/** Microsoft's trailing line, e.g. "©2026 Microsoft Corporation. All rights reserved." */
-function isCopyrightFooter(cell: string): boolean {
-  return /microsoft corporation\.?\s*all rights reserved/i.test(cell);
-}
-
 export function parseReportCsv(
   text: string,
   delimiter = ",",

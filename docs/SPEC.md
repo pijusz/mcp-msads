@@ -67,7 +67,11 @@ things that survive a careless call, rather than from invisibility:
   `destructiveHint: true`; creates and updates are not, so clients can prompt
   proportionally rather than treating every write alike.
 - **Created entities default to `Paused`.** An agent that creates a campaign
-  without being explicit about status does not start spending money.
+  without being explicit about status does not start spending money. The
+  default is applied in the service's entity spec (`toWire`), so it holds for
+  every caller of `addCampaigns` / `addAdGroups` / `addAds` / `addKeywords`,
+  not only the tools. Bulk upload and the raw mutation tool send records as
+  written and say so in their descriptions.
 
 ## 5. Partial failure is a first-class result
 
@@ -80,6 +84,15 @@ non-positional `PartialErrors` array carrying its own `Index`.
 tool therefore returns `{ submitted, succeeded, failed, ids, outcomes }`, never a
 boolean. This is the single most commonly mishandled part of this API.
 
+Entity writes that share the add / update / delete shape go through
+`services/batch-write.ts`. Each entity is an `EntitySpec` — path, parent field,
+list field, id field, limit, label, and a `toWire(entity, op)` that owns its
+guardrails and wire shaping. `batchWrite(spec, op, scope, parentId, items)`
+checks the limit, shapes each item, preserves body key order, and returns
+`mapBatchResult` output. Writes whose request or response does not fit
+(nested negative keywords, association writes that return only
+`PartialErrors`) stay explicit in their service.
+
 ## 6. Reporting: bounded wait, resumable id
 
 Reporting is asynchronous with no synchronous option, and Microsoft suggests
@@ -88,7 +101,11 @@ an hour is unusable, and returning a bare URL — which is what several existing
 servers do — hands the model something it cannot open.
 
 `run_report` submits, polls with a fast-then-backing-off cadence, downloads,
-unzips, and parses. If the budget expires it returns `status: "pending"` with the
+unzips, and parses. The submit → poll → timeout loop is `utils/poll-job.ts`,
+shared with bulk download and bulk upload; it takes an injectable `Clock` so
+budget expiry is tested without waiting. `run_report` and `get_report` read a
+poll result through one function, so Error and no-rows mean the same thing on
+both paths. If the budget expires it returns `status: "pending"` with the
 `report_request_id`, and `get_report` collects it later. The report is never
 lost and never paid for twice.
 
@@ -117,8 +134,10 @@ is resumed through `get_bulk_upload` rather than submitted again.
 ## 8. Guardrails encode behaviour that fails silently
 
 `services/guardrails.ts` refuses requests the API would accept and then quietly
-ignore. Silent no-ops are worse than errors, because the caller believes the
-change took effect:
+ignore. The rules are applied by each entity's `toWire` in the service layer,
+so a direct service call is held to the same rules as a tool call. Silent
+no-ops are worse than errors, because the caller believes the change took
+effect:
 
 - `TargetCpaBiddingScheme` / `TargetRoasBiddingScheme` are converted to
   `MaxConversions` / `MaxConversionValue` behind your back (since 2025-08-04).
@@ -298,11 +317,14 @@ Eight services carried an identical `scope(ids)` helper written for
 `exactOptionalPropertyTypes` — a flag this project does not enable, making the
 helper a no-op wrapper around a plain spread. Deleted, 50 lines.
 
-The add/update/delete triples were deliberately **not** abstracted. They only
-look uniform: the id field differs per *operation* (`AdExtensionIdentities` on
-add, `AdExtensionIds` on update), update synthesizes an id array where add does
-not, the human-readable label differs per entity, and validation differs per
-operation. A factory would replace readable wire shapes with configuration you
-have to decode — and the value of these functions is that reading one tells you
-exactly what JSON Microsoft receives, which is what has to be checked against
-the reference page.
+The add/update/delete triples were at first deliberately **not** abstracted,
+on the argument that each hand-written function shows exactly what JSON
+Microsoft receives. That argument lost to drift: `updateAds` skipped the
+asset-link normalization `addAds` applied, and guardrails were split between
+tools and services so a direct service call skipped half of them. They are now
+`EntitySpec`s in `services/batch-write.ts`. The real differences are explicit
+spec fields rather than hidden in copies — `addedIds` for add responses that
+return objects (`AdExtensionIdentities`, created `UetTags`), `label(e, op)`,
+`toWire(e, op)`, and `batchFields` for trailing body fields such as
+`CriterionType`. Body key order is preserved, and
+`tests/service-contracts.test.ts` still pins every wire body.

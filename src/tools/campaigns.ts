@@ -1,18 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ResolvedAccount } from "@/services/accounts";
 import * as cm from "@/services/campaigns";
-import {
-  BID_STRATEGIES,
-  CAMPAIGN_TYPES,
-  MATCH_TYPES,
-  normalizeBiddingScheme,
-  rejectChildBidStrategy,
-  validateCampaignType,
-  validateMatchType,
-} from "@/services/guardrails";
-import { toMsDate } from "@/services/reporting";
-import { ACCOUNT_ARGS, ids, WRITE } from "@/tools/_shared";
+import { BID_STRATEGIES, CAMPAIGN_TYPES, MATCH_TYPES } from "@/services/guardrails";
+import type { Scope } from "@/services/msads-api";
+import { ACCOUNT_ARGS, ID, ids, WRITE } from "@/tools/_shared";
 import { BATCH_LIMITS } from "@/utils/batch";
 import {
   COLLECTION_LIMIT,
@@ -23,7 +14,7 @@ import {
 import { defineRead } from "@/utils/define-read";
 import { MsAdsError } from "@/utils/errors";
 import { destructiveTool, writeTool } from "@/utils/register-tool";
-import { assertHasFields, run, stripUndefined } from "@/utils/tool-response";
+import { run } from "@/utils/tool-response";
 
 /** Every write tool resolves the account/customer pair the same way. */
 /** Status is Active or Paused; there is no separate 'Enabled'. */
@@ -35,7 +26,7 @@ const STATUS = z.enum(["Active", "Paused"]);
  * rather than guessing a type and having the write rejected.
  */
 async function withAdTypes(
-  scope: ResolvedAccount,
+  scope: Scope,
   adGroupId: string,
   adIds: string[],
   status: string,
@@ -51,31 +42,6 @@ async function withAdTypes(
     }
     return { Id: id, Type: type, Status: status };
   });
-}
-
-/**
- * Convert StartDate / EndDate from `YYYY-MM-DD` to the API's `{Day, Month,
- * Year}` object.
- *
- * The tools take ISO strings so that a date means the same thing everywhere:
- * run_report already accepted `2026-08-01`, while these tools made the caller
- * hand-build a date object for the identical concept. Building it wrong is
- * API error 113.
- */
-function isoDates(entity: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const field of ["StartDate", "EndDate"] as const) {
-    const value = entity[field];
-    if (typeof value === "string" && value !== "") out[field] = toMsDate(value);
-  }
-  return out;
-}
-
-/** `{ BiddingScheme }` with its Type normalized, or nothing when absent. */
-function biddingScheme(entity: Record<string, unknown>): Record<string, unknown> {
-  return entity.BiddingScheme === undefined
-    ? {}
-    : { BiddingScheme: normalizeBiddingScheme(entity.BiddingScheme) };
 }
 
 export function registerCampaignTools(server: McpServer): void {
@@ -98,7 +64,7 @@ export function registerCampaignTools(server: McpServer): void {
         .optional()
         .describe("Restrict to one campaign type."),
       campaign_ids: z
-        .array(z.string())
+        .array(ID)
         .max(MAX_COLLECTION_LIMIT)
         .optional()
         .describe("Fetch these campaigns specifically instead of the whole account."),
@@ -106,19 +72,14 @@ export function registerCampaignTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const wanted = Array.isArray(args.campaign_ids)
-        ? args.campaign_ids.map(String)
-        : null;
+      const wanted = args.campaign_ids ?? null;
       const campaigns = wanted
         ? await cm.getCampaignsByIds(scope, wanted)
-        : await cm.getCampaignsByAccount(
-            scope,
-            args.campaign_type ? String(args.campaign_type) : undefined,
-          );
+        : await cm.getCampaignsByAccount(scope, args.campaign_type);
       return {
         account_id: scope.accountId,
         ...collectionEnvelope("campaigns", campaigns, {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         }),
       };
     },
@@ -134,16 +95,16 @@ export function registerCampaignTools(server: McpServer): void {
       "List the ad groups in a campaign, with status, bids, and targeting settings.",
     inputSchema: {
       ...ACCOUNT_ARGS,
-      campaign_id: z.string().describe("Campaign id."),
+      campaign_id: ID.describe("Campaign id."),
       limit: COLLECTION_LIMIT,
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const adGroups = await cm.getAdGroupsByCampaign(scope, String(args.campaign_id));
+      const adGroups = await cm.getAdGroupsByCampaign(scope, args.campaign_id);
       return {
-        campaign_id: String(args.campaign_id),
+        campaign_id: args.campaign_id,
         ...collectionEnvelope("ad_groups", adGroups, {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         }),
       };
     },
@@ -158,7 +119,7 @@ export function registerCampaignTools(server: McpServer): void {
     description: `List the ads in an ad group. Optionally filter by ad type: ${cm.AD_TYPES.join(", ")} (no "Ad" suffix, except ResponsiveAd).`,
     inputSchema: {
       ...ACCOUNT_ARGS,
-      ad_group_id: z.string().describe("Ad group id."),
+      ad_group_id: ID.describe("Ad group id."),
       ad_types: z
         .array(z.enum(cm.AD_TYPES))
         .optional()
@@ -167,15 +128,11 @@ export function registerCampaignTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const ads = await cm.getAdsByAdGroup(
-        scope,
-        String(args.ad_group_id),
-        Array.isArray(args.ad_types) ? args.ad_types.map(String) : undefined,
-      );
+      const ads = await cm.getAdsByAdGroup(scope, args.ad_group_id, args.ad_types);
       return {
-        ad_group_id: String(args.ad_group_id),
+        ad_group_id: args.ad_group_id,
         ...collectionEnvelope("ads", ads, {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         }),
       };
     },
@@ -192,16 +149,16 @@ export function registerCampaignTools(server: McpServer): void {
       "For performance data on these keywords use run_report with report_type keyword_performance.",
     inputSchema: {
       ...ACCOUNT_ARGS,
-      ad_group_id: z.string().describe("Ad group id."),
+      ad_group_id: ID.describe("Ad group id."),
       limit: COLLECTION_LIMIT,
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const keywords = await cm.getKeywordsByAdGroup(scope, String(args.ad_group_id));
+      const keywords = await cm.getKeywordsByAdGroup(scope, args.ad_group_id);
       return {
-        ad_group_id: String(args.ad_group_id),
+        ad_group_id: args.ad_group_id,
         ...collectionEnvelope("keywords", keywords, {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         }),
       };
     },
@@ -219,7 +176,7 @@ export function registerCampaignTools(server: McpServer): void {
     inputSchema: {
       ...ACCOUNT_ARGS,
       budget_ids: z
-        .array(z.string())
+        .array(ID)
         .max(MAX_COLLECTION_LIMIT)
         .optional()
         .describe("Specific budget ids; omit for all."),
@@ -227,12 +184,9 @@ export function registerCampaignTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const budgets = await cm.getBudgetsByIds(
-        scope,
-        Array.isArray(args.budget_ids) ? args.budget_ids.map(String) : undefined,
-      );
+      const budgets = await cm.getBudgetsByIds(scope, args.budget_ids);
       return collectionEnvelope("budgets", budgets, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -270,10 +224,7 @@ Notes that prevent silent misconfiguration:
                   "LifetimeBudgetStandard",
                 ])
                 .optional(),
-              BudgetId: z
-                .string()
-                .optional()
-                .describe("Attach an existing shared budget."),
+              BudgetId: ID.optional().describe("Attach an existing shared budget."),
               Status: STATUS.optional().describe("Default Paused."),
               BiddingScheme: z
                 .object({ Type: z.enum(BID_STRATEGIES) })
@@ -300,15 +251,9 @@ Notes that prevent silent misconfiguration:
         .min(1)
         .max(BATCH_LIMITS.campaigns),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const campaigns = (args.campaigns as Record<string, unknown>[]).map((c) => {
-        validateCampaignType(c.CampaignType);
-        // Defaulting to Paused: creating live spend without being asked to is
-        // not a reasonable default for an agent-driven call.
-        return { Status: "Paused", ...c, ...isoDates(c), ...biddingScheme(c) };
-      });
-      return cm.addCampaigns(scope, campaigns);
+      return cm.addCampaigns(scope, args.campaigns);
     }),
   );
 
@@ -324,11 +269,11 @@ Use this to pause or resume (Status), change budgets, or switch bid strategy. Ch
         .array(
           z
             .object({
-              Id: z.string().describe("Campaign id to update."),
+              Id: ID.describe("Campaign id to update."),
               Name: z.string().optional(),
               Status: STATUS.optional(),
               DailyBudget: z.number().optional(),
-              BudgetId: z.string().optional(),
+              BudgetId: ID.optional(),
               BiddingScheme: z
                 .object({ Type: z.enum(BID_STRATEGIES) })
                 .passthrough()
@@ -341,14 +286,9 @@ Use this to pause or resume (Status), change budgets, or switch bid strategy. Ch
         .min(1)
         .max(BATCH_LIMITS.campaigns),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const campaigns = (args.campaigns as Record<string, unknown>[]).map((c) => ({
-        ...c,
-        ...isoDates(c),
-        ...biddingScheme(c),
-      }));
-      return cm.updateCampaigns(scope, campaigns);
+      return cm.updateCampaigns(scope, args.campaigns);
     }),
   );
 
@@ -365,21 +305,18 @@ Ad groups, ads, and keywords need parent_id (the campaign id for an ad group, th
       entity_type: z
         .enum(["campaign", "ad_group", "ad", "keyword"])
         .describe("What the ids refer to."),
-      ids: z.array(z.string()).min(1).describe("Entity ids to change."),
+      ids: z.array(ID).min(1).describe("Entity ids to change."),
       status: STATUS.describe("Active to resume, Paused to stop delivery."),
-      parent_id: z
-        .string()
-        .optional()
-        .describe(
-          "Campaign id for ad groups; ad group id for ads and keywords. Not needed for campaigns.",
-        ),
+      parent_id: ID.optional().describe(
+        "Campaign id for ad groups; ad group id for ads and keywords. Not needed for campaigns.",
+      ),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const entityIds = (args.ids as string[]).map(String);
-      const status = String(args.status);
-      const type = String(args.entity_type);
-      const parentId = args.parent_id ? String(args.parent_id) : "";
+      const entityIds = args.ids;
+      const status = args.status;
+      const type = args.entity_type;
+      const parentId = args.parent_id || "";
 
       if (type !== "campaign" && !parentId) {
         const parent = type === "ad_group" ? "campaign id" : "ad group id";
@@ -410,14 +347,14 @@ Ad groups, ads, and keywords need parent_id (the campaign id for an ad group, th
   destructiveTool(
     server,
     "delete_campaigns",
-    `${WRITE}Permanently delete campaigns. This cannot be undone and removes their ad groups, ads, and keywords with them. To stop delivery reversibly, use set_campaign_status with Paused instead.`,
+    `${WRITE}Permanently delete campaigns. This cannot be undone and removes their ad groups, ads, and keywords with them. To stop delivery reversibly, use set_status with entity_type campaign and status Paused instead.`,
     {
       ...ACCOUNT_ARGS,
-      campaign_ids: z.array(z.string()).min(1).max(BATCH_LIMITS.campaigns),
+      campaign_ids: z.array(ID).min(1).max(BATCH_LIMITS.campaigns),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return cm.deleteCampaigns(scope, (args.campaign_ids as string[]).map(String));
+      return cm.deleteCampaigns(scope, args.campaign_ids);
     }),
   );
 
@@ -429,7 +366,7 @@ Ad groups, ads, and keywords need parent_id (the campaign id for an ad group, th
 Bid strategies cannot be set here — they are campaign-level only since April 2021, and the API silently ignores an ad-group BiddingScheme rather than rejecting it.`,
     {
       ...ACCOUNT_ARGS,
-      campaign_id: z.string().describe("Parent campaign id."),
+      campaign_id: ID.describe("Parent campaign id."),
       ad_groups: z
         .array(
           z
@@ -459,13 +396,9 @@ Bid strategies cannot be set here — they are campaign-level only since April 2
         .min(1)
         .max(BATCH_LIMITS.adGroups),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const adGroups = (args.ad_groups as Record<string, unknown>[]).map((g) => {
-        rejectChildBidStrategy(g, "ad group");
-        return { Status: "Paused", ...g, ...isoDates(g) };
-      });
-      return cm.addAdGroups(scope, String(args.campaign_id), adGroups);
+      return cm.addAdGroups(scope, args.campaign_id, args.ad_groups);
     }),
   );
 
@@ -475,12 +408,12 @@ Bid strategies cannot be set here — they are campaign-level only since April 2
     `${WRITE}Update ad groups. Each entry must carry its Id. Only the fields you send change.`,
     {
       ...ACCOUNT_ARGS,
-      campaign_id: z.string(),
+      campaign_id: ID,
       ad_groups: z
         .array(
           z
             .object({
-              Id: z.string(),
+              Id: ID,
               Name: z.string().optional(),
               Status: STATUS.optional(),
               CpcBid: z.object({ Amount: z.number() }).optional(),
@@ -490,13 +423,9 @@ Bid strategies cannot be set here — they are campaign-level only since April 2
         .min(1)
         .max(BATCH_LIMITS.adGroups),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const adGroups = (args.ad_groups as Record<string, unknown>[]).map((g) => {
-        rejectChildBidStrategy(g, "ad group");
-        return { ...g, ...isoDates(g) };
-      });
-      return cm.updateAdGroups(scope, String(args.campaign_id), adGroups);
+      return cm.updateAdGroups(scope, args.campaign_id, args.ad_groups);
     }),
   );
 
@@ -506,16 +435,12 @@ Bid strategies cannot be set here — they are campaign-level only since April 2
     `${WRITE}Permanently delete ad groups and everything under them. Pause instead if you may want them back.`,
     {
       ...ACCOUNT_ARGS,
-      campaign_id: z.string(),
-      ad_group_ids: z.array(z.string()).min(1).max(BATCH_LIMITS.adGroups),
+      campaign_id: ID,
+      ad_group_ids: z.array(ID).min(1).max(BATCH_LIMITS.adGroups),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return cm.deleteAdGroups(
-        scope,
-        String(args.campaign_id),
-        (args.ad_group_ids as string[]).map(String),
-      );
+      return cm.deleteAdGroups(scope, args.campaign_id, args.ad_group_ids);
     }),
   );
 
@@ -532,7 +457,7 @@ Headlines and Descriptions are sent to the API as asset links; plain strings are
 Limits: 3–15 headlines (≤30 chars each), 2–4 descriptions (≤90 chars each), Path1/Path2 ≤15 chars. An ad group allows at most 3 active responsive search ads and 100 ads in total.`,
     {
       ...ACCOUNT_ARGS,
-      ad_group_id: z.string().describe("Parent ad group id."),
+      ad_group_id: ID.describe("Parent ad group id."),
       ads: z
         .array(
           z
@@ -548,13 +473,9 @@ Limits: 3–15 headlines (≤30 chars each), 2–4 descriptions (≤90 chars eac
         .min(1)
         .max(BATCH_LIMITS.ads),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const ads = (args.ads as Record<string, unknown>[]).map((a) => ({
-        Status: "Paused",
-        ...a,
-      }));
-      return cm.addAds(scope, String(args.ad_group_id), ads);
+      return cm.addAds(scope, args.ad_group_id, args.ads);
     }),
   );
 
@@ -564,19 +485,15 @@ Limits: 3–15 headlines (≤30 chars each), 2–4 descriptions (≤90 chars eac
     `${WRITE}Update ads. Each entry needs Id and Type. Most ad copy fields cannot be edited after creation — for a copy change, create a new ad and delete the old one.`,
     {
       ...ACCOUNT_ARGS,
-      ad_group_id: z.string(),
+      ad_group_id: ID,
       ads: z
-        .array(z.object({ Id: z.string(), Type: z.string() }).passthrough())
+        .array(z.object({ Id: ID, Type: z.string() }).passthrough())
         .min(1)
         .max(BATCH_LIMITS.ads),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return cm.updateAds(
-        scope,
-        String(args.ad_group_id),
-        args.ads as Record<string, unknown>[],
-      );
+      return cm.updateAds(scope, args.ad_group_id, args.ads);
     }),
   );
 
@@ -586,16 +503,12 @@ Limits: 3–15 headlines (≤30 chars each), 2–4 descriptions (≤90 chars eac
     `${WRITE}Permanently delete ads from an ad group.`,
     {
       ...ACCOUNT_ARGS,
-      ad_group_id: z.string(),
-      ad_ids: z.array(z.string()).min(1).max(BATCH_LIMITS.ads),
+      ad_group_id: ID,
+      ad_ids: z.array(ID).min(1).max(BATCH_LIMITS.ads),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return cm.deleteAds(
-        scope,
-        String(args.ad_group_id),
-        (args.ad_ids as string[]).map(String),
-      );
+      return cm.deleteAds(scope, args.ad_group_id, args.ad_ids);
     }),
   );
 
@@ -609,7 +522,7 @@ Match types are Broad, Phrase, and Exact only — Content and broad-match-modifi
 Per-keyword bids are allowed, but bid STRATEGIES are campaign-level only.`,
     {
       ...ACCOUNT_ARGS,
-      ad_group_id: z.string().describe("Parent ad group id."),
+      ad_group_id: ID.describe("Parent ad group id."),
       keywords: z
         .array(
           z
@@ -631,14 +544,9 @@ Per-keyword bids are allowed, but bid STRATEGIES are campaign-level only.`,
         .min(1)
         .max(BATCH_LIMITS.keywords),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const keywords = (args.keywords as Record<string, unknown>[]).map((k) => {
-        validateMatchType(k.MatchType);
-        rejectChildBidStrategy(k, "keyword");
-        return { Status: "Paused", ...k };
-      });
-      return cm.addKeywords(scope, String(args.ad_group_id), keywords);
+      return cm.addKeywords(scope, args.ad_group_id, args.keywords);
     }),
   );
 
@@ -648,12 +556,12 @@ Per-keyword bids are allowed, but bid STRATEGIES are campaign-level only.`,
     `${WRITE}Update keywords — bids, status, final URLs. Each entry must carry its Id.`,
     {
       ...ACCOUNT_ARGS,
-      ad_group_id: z.string(),
+      ad_group_id: ID,
       keywords: z
         .array(
           z
             .object({
-              Id: z.string(),
+              Id: ID,
               Bid: z.object({ Amount: z.number() }).optional(),
               Status: STATUS.optional(),
               FinalUrls: z.array(z.string()).optional(),
@@ -663,16 +571,9 @@ Per-keyword bids are allowed, but bid STRATEGIES are campaign-level only.`,
         .min(1)
         .max(BATCH_LIMITS.keywords),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const keywords = (args.keywords as Record<string, unknown>[]).map((k) => {
-        // Id identifies the row; something else has to change or this is a no-op.
-        const { Id: _id, ...fields } = stripUndefined(k);
-        assertHasFields(fields, "update on a keyword");
-        rejectChildBidStrategy(k, "keyword");
-        return k;
-      });
-      return cm.updateKeywords(scope, String(args.ad_group_id), keywords);
+      return cm.updateKeywords(scope, args.ad_group_id, args.keywords);
     }),
   );
 
@@ -682,16 +583,12 @@ Per-keyword bids are allowed, but bid STRATEGIES are campaign-level only.`,
     `${WRITE}Permanently delete keywords from an ad group. Historical performance for a deleted keyword stays in reports, but the keyword itself is gone. Pause instead if you may want it back.`,
     {
       ...ACCOUNT_ARGS,
-      ad_group_id: z.string(),
-      keyword_ids: z.array(z.string()).min(1).max(BATCH_LIMITS.keywords),
+      ad_group_id: ID,
+      keyword_ids: z.array(ID).min(1).max(BATCH_LIMITS.keywords),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return cm.deleteKeywords(
-        scope,
-        String(args.ad_group_id),
-        (args.keyword_ids as string[]).map(String),
-      );
+      return cm.deleteKeywords(scope, args.ad_group_id, args.keyword_ids);
     }),
   );
 }

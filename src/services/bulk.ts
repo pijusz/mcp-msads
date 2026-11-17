@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
 import { getAccessToken } from "@/auth/oauth";
 import { getEnv, resolveDeveloperToken } from "@/config/env";
-import type { AccountIds } from "@/services/campaigns";
-import { downloadFile, msadsFetch } from "@/services/msads-api";
+import {
+  downloadFile,
+  isMicrosoftAdsHost,
+  msadsFetch,
+  type Scope,
+} from "@/services/msads-api";
 import { forEachDelimitedRow } from "@/utils/csv";
 import { MsAdsError } from "@/utils/errors";
 import { log } from "@/utils/logger";
+import { type Clock, pollJob } from "@/utils/poll-job";
 import {
   MAX_API_RESPONSE_BYTES,
   type SafeHttpDependencies,
@@ -125,7 +130,7 @@ export interface BulkDownloadSubmission {
 }
 
 export async function submitBulkDownload(
-  ids: AccountIds,
+  ids: Scope,
   input: BulkDownloadInput,
 ): Promise<BulkDownloadSubmission> {
   if (!input.entities?.length) {
@@ -194,7 +199,7 @@ export interface BulkStatus {
 }
 
 export async function getBulkDownloadStatus(
-  ids: AccountIds,
+  ids: Scope,
   requestId: string,
 ): Promise<BulkStatus> {
   const res = await msadsFetch<{
@@ -342,6 +347,15 @@ async function parseBulkDownloadStatus(
 }
 
 /**
+ * Bulk poll cadence. Bulk files take minutes, not seconds; polling every
+ * second wastes calls and counts against a throttle that locks out for 15
+ * minutes when tripped. 3s × 3, then doubling from 5s to a 15s ceiling.
+ */
+export function bulkPollDelayMs(attempt: number): number {
+  return attempt < 3 ? 3000 : Math.min(15_000, 5000 * 2 ** (attempt - 3));
+}
+
+/**
  * Run a bulk download to completion within a budget.
  *
  * Bulk is slower than reporting — Microsoft suggests 15–20s polling intervals
@@ -349,47 +363,49 @@ async function parseBulkDownloadStatus(
  * polls more patiently and returns a resumable id when the budget runs out.
  */
 export async function runBulkDownload(
-  ids: AccountIds,
+  ids: Scope,
   input: BulkDownloadInput,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; clock?: Clock } = {},
 ): Promise<BulkDownloadResult> {
   const env = getEnv();
   const timeoutMs = opts.timeoutMs ?? env.MSADS_BULK_TIMEOUT_MS;
   const { downloadRequestId } = await submitBulkDownload(ids, input);
   log.info(`Bulk download submitted as ${downloadRequestId}`);
 
-  const started = Date.now();
-  for (let attempt = 0; ; attempt++) {
-    const status = await getBulkDownloadStatus(ids, downloadRequestId);
-
-    const parsed = await parseBulkDownloadStatus(
-      status,
-      downloadRequestId,
-      input.fileType ?? "Csv",
-    );
-    if (parsed.status !== "pending") return parsed;
-
-    if (Date.now() - started >= timeoutMs) {
+  const { parsed } = await pollJob({
+    clock: opts.clock,
+    poll: async () => {
+      const status = await getBulkDownloadStatus(ids, downloadRequestId);
       return {
-        status: "pending",
+        status,
+        parsed: await parseBulkDownloadStatus(
+          status,
+          downloadRequestId,
+          input.fileType ?? "Csv",
+        ),
+      };
+    },
+    isPending: ({ parsed }) => parsed.status === "pending",
+    budgetMs: timeoutMs,
+    delay: bulkPollDelayMs,
+    onTimeout: ({ status }, waitedMs) => ({
+      status,
+      parsed: {
+        status: "pending" as const,
         downloadRequestId,
         message:
-          `Still generating after ${Math.round((Date.now() - started) / 1000)}s ` +
+          `Still generating after ${Math.round(waitedMs / 1000)}s ` +
           `(${status.percentComplete ?? 0}% complete). Collect it with get_bulk_download using ` +
           `download_request_id "${downloadRequestId}" — the id stays valid for 2 days.`,
-      };
-    }
-
-    // Bulk files take minutes, not seconds; polling every second wastes calls
-    // and counts against a throttle that locks out for 15 minutes when tripped.
-    const delay = attempt < 3 ? 3000 : Math.min(15_000, 5000 * 2 ** (attempt - 3));
-    await new Promise((r) => setTimeout(r, delay));
-  }
+      },
+    }),
+  });
+  return parsed;
 }
 
 /** Collect a bulk download submitted earlier. */
 export async function getSubmittedBulkDownload(
-  ids: AccountIds,
+  ids: Scope,
   downloadRequestId: string,
   fileType: "Csv" | "Tsv" = "Csv",
 ): Promise<BulkDownloadResult> {
@@ -493,7 +509,7 @@ interface UploadUrlResponse {
  * (BulkServiceUrlAlreadyUsedForUpload).
  */
 export async function getBulkUploadUrl(
-  ids: AccountIds,
+  ids: Scope,
   responseMode: "ErrorsOnly" | "ErrorsAndResults" = "ErrorsAndResults",
 ): Promise<{ uploadUrl: string; requestId: string }> {
   const res = await msadsFetch<UploadUrlResponse>("Bulk", "BulkUploadUrl/Query", {
@@ -508,18 +524,6 @@ export async function getBulkUploadUrl(
 }
 
 /**
- * Hosts a GetBulkUploadUrl URL may point at. The URL is not guaranteed to be
- * on the Bulk service host (upload URLs have historically lived on a separate
- * file-upload host), so pinning to bulk.api.* would break every upload. Any
- * HTTPS host under bingads.microsoft.com is accepted — still Microsoft-only,
- * and checked on every redirect, since the request carries the access token.
- */
-export function isMicrosoftAdsHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return host === "bingads.microsoft.com" || host.endsWith(".bingads.microsoft.com");
-}
-
-/**
  * POST the zipped bulk file to the upload URL.
  *
  * This endpoint does NOT use `Authorization: Bearer`. It takes the raw access
@@ -528,7 +532,7 @@ export function isMicrosoftAdsHost(hostname: string): boolean {
  */
 export async function postBulkFile(
   uploadUrl: string,
-  ids: AccountIds,
+  ids: Scope,
   archive: Buffer,
   fileName = "upload.zip",
   dependencies: SafeHttpDependencies = {},
@@ -606,7 +610,7 @@ const PENDING_UPLOAD_STATES = new Set([
 ]);
 
 export async function getBulkUploadStatus(
-  ids: AccountIds,
+  ids: Scope,
   requestId: string,
 ): Promise<BulkUploadStatus> {
   const status = await msadsFetch<{
@@ -677,9 +681,9 @@ export async function parseBulkUploadStatus(
 
 /** Poll an upload to completion and parse the result file. */
 export async function runBulkUpload(
-  ids: AccountIds,
+  ids: Scope,
   records: Array<Record<string, string>>,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; clock?: Clock; upload?: SafeHttpDependencies } = {},
 ): Promise<BulkUploadResult> {
   const env = getEnv();
   const timeoutMs = opts.timeoutMs ?? env.MSADS_BULK_TIMEOUT_MS;
@@ -688,35 +692,37 @@ export async function runBulkUpload(
   const archive = zipSync([{ name: "upload.csv", data: csv }]);
 
   const { uploadUrl, requestId } = await getBulkUploadUrl(ids);
-  await postBulkFile(uploadUrl, ids, archive);
+  await postBulkFile(uploadUrl, ids, archive, "upload.zip", opts.upload);
   log.info(`Bulk upload ${requestId} submitted (${records.length} records)`);
 
-  const started = Date.now();
-  for (let attempt = 0; ; attempt++) {
-    const status = await getBulkUploadStatus(ids, requestId);
-    const parsed = await parseBulkUploadStatus(status, requestId);
-    if (parsed.status !== "pending") return parsed;
-
-    if (Date.now() - started >= timeoutMs) {
-      return {
-        status: "pending",
+  // Microsoft suggests roughly one minute per 10,000 rows before polling.
+  const { parsed } = await pollJob({
+    clock: opts.clock,
+    poll: async () => {
+      const status = await getBulkUploadStatus(ids, requestId);
+      return { status, parsed: await parseBulkUploadStatus(status, requestId) };
+    },
+    isPending: ({ parsed }) => parsed.status === "pending",
+    budgetMs: timeoutMs,
+    delay: bulkPollDelayMs,
+    onTimeout: ({ status }, waitedMs) => ({
+      status,
+      parsed: {
+        status: "pending" as const,
         requestId,
         message:
-          `Still processing after ${Math.round((Date.now() - started) / 1000)}s ` +
+          `Still processing after ${Math.round(waitedMs / 1000)}s ` +
           `(${status.percentComplete ?? 0}%). The upload was accepted — collect it with get_bulk_upload ` +
           `using request_id "${requestId}".`,
-      };
-    }
-
-    // Microsoft suggests roughly one minute per 10,000 rows before polling.
-    const delay = attempt < 3 ? 3000 : Math.min(15_000, 5000 * 2 ** (attempt - 3));
-    await new Promise((r) => setTimeout(r, delay));
-  }
+      },
+    }),
+  });
+  return parsed;
 }
 
 /** Collect a bulk upload submitted earlier. */
 export async function getSubmittedBulkUpload(
-  ids: AccountIds,
+  ids: Scope,
   requestId: string,
 ): Promise<BulkUploadResult> {
   return parseBulkUploadStatus(await getBulkUploadStatus(ids, requestId), requestId);

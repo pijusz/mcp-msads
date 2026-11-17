@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as bulk from "@/services/bulk";
-import { ACCOUNT_ARGS, ids } from "@/tools/_shared";
+import { ACCOUNT_ARGS, ID, ids } from "@/tools/_shared";
 import {
   COLLECTION_LIMIT,
   collectionEnvelope,
@@ -119,7 +119,7 @@ export function registerBulkTools(server: McpServer): void {
         .min(1)
         .describe("Entity families to export."),
       campaign_ids: z
-        .array(z.string())
+        .array(ID)
         .max(bulk.MAX_BULK_CAMPAIGN_IDS)
         .optional()
         .describe(
@@ -142,20 +142,18 @@ export function registerBulkTools(server: McpServer): void {
       const result = await bulk.runBulkDownload(
         scope,
         {
-          entities: (args.entities as string[]).map(String),
-          ...(Array.isArray(args.campaign_ids)
-            ? { campaignIds: args.campaign_ids.map(String) }
-            : {}),
+          entities: args.entities,
+          ...(args.campaign_ids ? { campaignIds: args.campaign_ids } : {}),
           ...(args.last_sync_time_utc
-            ? { lastSyncTimeUtc: String(args.last_sync_time_utc) }
+            ? { lastSyncTimeUtc: args.last_sync_time_utc }
             : {}),
         },
-        args.timeout_ms ? { timeoutMs: Number(args.timeout_ms) } : {},
+        args.timeout_ms ? { timeoutMs: args.timeout_ms } : {},
       );
 
       return {
         account_id: scope.accountId,
-        ...shapeDownloadResult(result, Number(args.limit ?? DEFAULT_COLLECTION_LIMIT)),
+        ...shapeDownloadResult(result, args.limit ?? DEFAULT_COLLECTION_LIMIT),
       };
     },
   });
@@ -164,6 +162,8 @@ export function registerBulkTools(server: McpServer): void {
     server,
     "bulk_upload",
     `⚠️ WRITE OPERATION — Create, change, or delete many entities at once by uploading bulk records. Bulk record types can remove data, so this entire surface is conservatively destructive and can affect live ad spend.
+
+No guardrails run on bulk records. Unlike the dedicated create_*/update_* tools, nothing here rejects TargetCpa/TargetRoas bid strategies (silently converted), bid strategies below campaign level (silently ignored), removed match types, or DynamicSearchAds campaigns, and nothing defaults new entities to Paused. Records reach Microsoft exactly as written; prefer the dedicated tools when they can express the change.
 
 Use this instead of the create_*/update_* tools when writing across many parents. Those cap at one parent per call (50 ads in ONE ad group, 1000 keywords in ONE ad group); this writes across the whole account in a single operation.
 
@@ -188,9 +188,9 @@ Notes:
       limit: COLLECTION_LIMIT,
       timeout_ms: z.number().int().min(1000).optional(),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const records = args.records as Array<Record<string, string>>;
+      const records = args.records;
 
       const untyped = records.findIndex((r) => !r.Type);
       if (untyped >= 0) {
@@ -202,13 +202,13 @@ Notes:
       const result = await bulk.runBulkUpload(
         scope,
         records,
-        args.timeout_ms ? { timeoutMs: Number(args.timeout_ms) } : {},
+        args.timeout_ms ? { timeoutMs: args.timeout_ms } : {},
       );
 
       return {
         account_id: scope.accountId,
         submitted: records.length,
-        ...shapeUploadResult(result, Number(args.limit ?? DEFAULT_COLLECTION_LIMIT)),
+        ...shapeUploadResult(result, args.limit ?? DEFAULT_COLLECTION_LIMIT),
       };
     }),
   );
@@ -226,11 +226,8 @@ Notes:
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const result = await bulk.getSubmittedBulkDownload(
-        scope,
-        String(args.download_request_id),
-      );
-      return shapeDownloadResult(result, Number(args.limit ?? DEFAULT_COLLECTION_LIMIT));
+      const result = await bulk.getSubmittedBulkDownload(scope, args.download_request_id);
+      return shapeDownloadResult(result, args.limit ?? DEFAULT_COLLECTION_LIMIT);
     },
   });
 
@@ -248,8 +245,8 @@ Notes:
     handler: async (args) => {
       const scope = await ids(args);
       return shapeUploadResult(
-        await bulk.getSubmittedBulkUpload(scope, String(args.request_id)),
-        Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        await bulk.getSubmittedBulkUpload(scope, args.request_id),
+        args.limit ?? DEFAULT_COLLECTION_LIMIT,
       );
     },
   });

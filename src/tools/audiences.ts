@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as aud from "@/services/audiences";
-import { ACCOUNT_ARGS, ids, WRITE } from "@/tools/_shared";
+import { ACCOUNT_ARGS, ID, ids, WRITE } from "@/tools/_shared";
 import { BATCH_LIMITS } from "@/utils/batch";
 import {
   COLLECTION_LIMIT,
@@ -10,12 +10,12 @@ import {
   MAX_COLLECTION_LIMIT,
 } from "@/utils/collection";
 import { defineRead } from "@/utils/define-read";
-import { destructiveTool, writeTool } from "@/utils/register-tool";
+import { destructiveTool, type ToolArgs, writeTool } from "@/utils/register-tool";
 import { run } from "@/utils/tool-response";
 
 const CUSTOMER_LIST_ARGS = {
   ...ACCOUNT_ARGS,
-  audience_id: z.string().describe("Id of an existing CustomerList audience."),
+  audience_id: ID.describe("Id of an existing CustomerList audience."),
   emails: z
     .array(z.string())
     .min(1)
@@ -24,12 +24,12 @@ const CUSTOMER_LIST_ARGS = {
 };
 
 function customerListHandler(action: aud.CustomerListAction) {
-  return run(async (args: Record<string, unknown>) => {
+  return run(async (args: ToolArgs<typeof CUSTOMER_LIST_ARGS>) => {
     const scope = await ids(args);
     return aud.applyCustomerList(scope, {
-      audienceId: String(args.audience_id),
+      audienceId: args.audience_id,
       action,
-      emails: (args.emails as string[]).map(String),
+      emails: args.emails,
     });
   });
 }
@@ -48,7 +48,7 @@ export function registerAudienceTools(server: McpServer): void {
     inputSchema: {
       ...ACCOUNT_ARGS,
       audience_ids: z
-        .array(z.string())
+        .array(ID)
         .max(MAX_COLLECTION_LIMIT)
         .optional()
         .describe("Specific ids; omit for all."),
@@ -60,13 +60,9 @@ export function registerAudienceTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const audiences = await aud.getAudiencesByIds(
-        scope,
-        Array.isArray(args.audience_ids) ? args.audience_ids.map(String) : undefined,
-        args.type ? String(args.type) : undefined,
-      );
+      const audiences = await aud.getAudiencesByIds(scope, args.audience_ids, args.type);
       return collectionEnvelope("audiences", audiences, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -101,10 +97,7 @@ A RemarketingList needs a Rule and the TagId of the UET tag that feeds it. A Cus
                 .describe(
                   "Customer scope shares it across the manager account. One-way.",
                 ),
-              TagId: z
-                .string()
-                .optional()
-                .describe("UET tag id. Required for RemarketingList."),
+              TagId: ID.optional().describe("UET tag id. Required for RemarketingList."),
               Rule: z
                 .record(z.string(), z.unknown())
                 .optional()
@@ -115,9 +108,9 @@ A RemarketingList needs a Rule and the TagId of the UET tag that feeds it. A Cus
         .min(1)
         .max(BATCH_LIMITS.audiences),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return aud.addAudiences(scope, args.audiences as Record<string, unknown>[]);
+      return aud.addAudiences(scope, args.audiences);
     }),
   );
 
@@ -131,7 +124,7 @@ A RemarketingList needs a Rule and the TagId of the UET tag that feeds it. A Cus
         .array(
           z
             .object({
-              Id: z.string(),
+              Id: ID,
               Type: z.enum(aud.UPDATEABLE_AUDIENCE_TYPES),
               Name: z.string().max(128).optional(),
               Description: z.string().max(1024).optional(),
@@ -142,9 +135,9 @@ A RemarketingList needs a Rule and the TagId of the UET tag that feeds it. A Cus
         .min(1)
         .max(BATCH_LIMITS.audiences),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return aud.updateAudiences(scope, args.audiences as Record<string, unknown>[]);
+      return aud.updateAudiences(scope, args.audiences);
     }),
   );
 
@@ -154,11 +147,11 @@ A RemarketingList needs a Rule and the TagId of the UET tag that feeds it. A Cus
     `${WRITE}Permanently delete audiences. Any campaign or ad group targeting them loses that targeting, and the accumulated membership cannot be recovered — a rebuilt list starts empty and takes weeks to re-accumulate.`,
     {
       ...ACCOUNT_ARGS,
-      audience_ids: z.array(z.string()).min(1).max(BATCH_LIMITS.audiences),
+      audience_ids: z.array(ID).min(1).max(BATCH_LIMITS.audiences),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return aud.deleteAudiences(scope, (args.audience_ids as string[]).map(String));
+      return aud.deleteAudiences(scope, args.audience_ids);
     }),
   );
 

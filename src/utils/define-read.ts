@@ -1,7 +1,7 @@
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ZodRawShape } from "zod";
-import { readTool, strictToolSchema } from "@/utils/register-tool";
+import { readTool, strictToolSchema, type ToolArgs } from "@/utils/register-tool";
 import { errorPayload, ok, run } from "@/utils/tool-response";
 
 /**
@@ -40,7 +40,8 @@ export interface ReadDefinition<Args extends ZodRawShape> {
   uriVars?: Record<string, string>;
   /** Resource priority hint, 0.0–1.0. */
   priority?: number;
-  handler: (args: Record<string, unknown>) => Promise<unknown>;
+  /** Receives arguments already parsed by the strict schema, on both surfaces. */
+  handler: (args: ToolArgs<Args>) => Promise<unknown>;
 }
 
 function firstValue(value: string | string[] | undefined): string | undefined {

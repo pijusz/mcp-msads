@@ -168,16 +168,16 @@ function boundRawCollections(
   };
 }
 
-async function rawScope(service: ServiceName, args: Record<string, unknown>) {
+async function rawScope(
+  service: ServiceName,
+  args: { account_id?: string; customer_id?: string },
+) {
   const hasExplicitScope =
     args.account_id !== undefined || args.customer_id !== undefined;
   if (!isAccountScoped(service) && !hasExplicitScope) {
     return { accountId: "", customerId: undefined };
   }
-  return resolveAccount({
-    accountId: args.account_id as string | undefined,
-    customerId: args.customer_id as string | undefined,
-  });
+  return resolveAccount({ accountId: args.account_id, customerId: args.customer_id });
 }
 
 export function registerRawTools(server: McpServer): void {
@@ -200,9 +200,9 @@ ${PATH_GUIDE}`,
       customer_id: z.string().optional(),
       limit: COLLECTION_LIMIT,
     },
-    run(async (args: Record<string, unknown>) => {
-      const service = args.service as ServiceName;
-      const path = canonicalRawPath(String(args.path));
+    run(async (args) => {
+      const service = args.service;
+      const path = canonicalRawPath(args.path);
       assertAllowedRawRead(service, path);
       const scope = await rawScope(service, args);
 
@@ -213,10 +213,7 @@ ${PATH_GUIDE}`,
         ...(scope.customerId ? { customerId: scope.customerId } : {}),
         retry: "safe",
       });
-      return boundRawCollections(
-        response,
-        Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
-      );
+      return boundRawCollections(response, args.limit ?? DEFAULT_COLLECTION_LIMIT);
     }),
   );
 
@@ -240,13 +237,13 @@ Batch writes half-succeed: inspect PartialErrors and null result ids before assu
       account_id: z.string().optional(),
       customer_id: z.string().optional(),
     },
-    run(async (args: Record<string, unknown>) => {
-      const service = args.service as ServiceName;
-      const path = canonicalRawPath(String(args.path));
+    run(async (args) => {
+      const service = args.service;
+      const path = canonicalRawPath(args.path);
       assertNonSensitiveRawPath(path);
       const scope = await rawScope(service, args);
       const response = await msadsFetch<Record<string, unknown>>(service, path, {
-        method: args.method as "POST" | "PUT" | "DELETE",
+        method: args.method,
         body: args.body,
         ...(scope.accountId ? { accountId: scope.accountId } : {}),
         ...(scope.customerId ? { customerId: scope.customerId } : {}),

@@ -1,11 +1,6 @@
-import type { AccountIds } from "@/services/campaigns";
-import { msadsFetch } from "@/services/msads-api";
-import {
-  assertBatchLimit,
-  BATCH_LIMITS,
-  type BatchResult,
-  mapBatchResult,
-} from "@/utils/batch";
+import { batchWrite, type EntitySpec } from "@/services/batch-write";
+import { msadsFetch, type Scope } from "@/services/msads-api";
+import { BATCH_LIMITS, type BatchResult } from "@/utils/batch";
 import { MsAdsError } from "@/utils/errors";
 
 /**
@@ -181,7 +176,7 @@ function limitFor(level: CriterionLevel): number {
  * API returns every criterion of that type under the parent.
  */
 export async function getCriterions(
-  ids: AccountIds,
+  ids: Scope,
   level: CriterionLevel,
   parentId: string,
   criterionIds: string[] | null,
@@ -205,89 +200,65 @@ export async function getCriterions(
   return Array.isArray(list) ? (list as Record<string, unknown>[]) : [];
 }
 
-export async function addCriterions(
-  ids: AccountIds,
+function criterionSpec(
+  level: CriterionLevel,
+  batchFields: EntitySpec["batchFields"],
+): EntitySpec {
+  const p = paths(level);
+  return {
+    path: p.collection,
+    list: p.body,
+    idField: p.ids,
+    limit: limitFor(level),
+    what: "criterions",
+    label: (c, op) =>
+      String(
+        op === "add"
+          ? ((c.Criterion as Record<string, unknown>)?.Type ?? "")
+          : (c.Id ?? ""),
+      ),
+    batchFields,
+  };
+}
+
+export function addCriterions(
+  ids: Scope,
   level: CriterionLevel,
   criterions: Record<string, unknown>[],
 ): Promise<BatchResult> {
-  assertBatchLimit(criterions, limitFor(level), "criterions");
-  assertCompleteDeviceSet(criterions);
-  const criterionType = resolveCriterionType(criterions);
-  const p = paths(level);
-
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    p.collection,
-    {
-      method: "POST",
-      body: { [p.body]: criterions, CriterionType: criterionType },
-      ...ids,
-    },
-  );
-  return mapBatchResult(
-    res,
-    p.ids,
-    criterions.map((c) => String((c.Criterion as Record<string, unknown>)?.Type ?? "")),
-    criterions.length,
-  );
+  const spec = criterionSpec(level, (items) => {
+    const wire = items as Record<string, unknown>[];
+    assertCompleteDeviceSet(wire);
+    return { CriterionType: resolveCriterionType(wire) };
+  });
+  return batchWrite(spec, "add", ids, undefined, criterions);
 }
 
-export async function updateCriterions(
-  ids: AccountIds,
+export function updateCriterions(
+  ids: Scope,
   level: CriterionLevel,
   criterions: Record<string, unknown>[],
 ): Promise<BatchResult> {
-  assertBatchLimit(criterions, limitFor(level), "criterions");
-  const criterionType = resolveCriterionType(criterions);
-  const p = paths(level);
-
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    p.collection,
-    {
-      method: "PUT",
-      body: { [p.body]: criterions, CriterionType: criterionType },
-      ...ids,
-    },
-  );
-  return mapBatchResult(
-    { [p.ids]: criterions.map((c) => c.Id ?? null), ...res },
-    p.ids,
-    criterions.map((c) => String(c.Id ?? "")),
-    criterions.length,
-  );
+  const spec = criterionSpec(level, (items) => ({
+    CriterionType: resolveCriterionType(items as Record<string, unknown>[]),
+  }));
+  return batchWrite(spec, "update", ids, undefined, criterions);
 }
 
-export async function deleteCriterions(
-  ids: AccountIds,
+export function deleteCriterions(
+  ids: Scope,
   level: CriterionLevel,
   parentId: string,
   criterionIds: string[],
   criterionType: string,
 ): Promise<BatchResult> {
-  assertBatchLimit(criterionIds, limitFor(level), "criterions");
-  const p = paths(level);
-  const writeFamily = resolveDeleteCriterionType(criterionType);
-
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    p.collection,
-    {
-      method: "DELETE",
-      body: {
-        [p.ids]: criterionIds,
-        [p.parent]: parentId,
-        CriterionType: writeFamily,
-      },
-      ...ids,
-    },
-  );
-  return mapBatchResult(
-    { [p.ids]: criterionIds, ...res },
-    p.ids,
-    criterionIds,
-    criterionIds.length,
-  );
+  // The parent follows the ids in this body, so it rides in batchFields
+  // rather than the spec's leading parent slot.
+  const spec = criterionSpec(level, () => ({
+    [paths(level).parent]: parentId,
+    CriterionType: resolveDeleteCriterionType(criterionType),
+  }));
+  return batchWrite(spec, "delete", ids, undefined, criterionIds);
 }
 
 /* ------------------------------------------------------------------ *
@@ -303,7 +274,7 @@ export type ProfileType = "CompanyName" | "Industry" | "JobFunction" | "JobSenio
  * file, so a caller has to fetch and search it.
  */
 export async function getProfileDataFileUrl(
-  ids: AccountIds,
+  ids: Scope,
   profileType: ProfileType,
   languageLocale = "en",
 ): Promise<string> {
@@ -324,7 +295,7 @@ export async function getProfileDataFileUrl(
 
 /** Search LinkedIn company names to get their ProfileIds. */
 export async function searchCompanies(
-  ids: AccountIds,
+  ids: Scope,
   filter: string,
   languageLocale = "en",
 ): Promise<Record<string, unknown>[]> {
@@ -342,7 +313,7 @@ export async function searchCompanies(
 
 /** Temporary URL for the geographical location id file. */
 export async function getGeoLocationsFileUrl(
-  ids: AccountIds,
+  ids: Scope,
   languageLocale = "en",
   version = "2.0",
 ): Promise<string> {

@@ -234,7 +234,14 @@ describe("dedicated service request contracts", () => {
       [
         "/CampaignManagement/v13/Campaigns",
         "POST",
-        { AccountId: IDS.accountId, Campaigns: [{ Name: "Good" }, { Name: "Bad" }] },
+        {
+          AccountId: IDS.accountId,
+          // Creates default to Paused in the service, whoever the caller is.
+          Campaigns: [
+            { Status: "Paused", Name: "Good" },
+            { Status: "Paused", Name: "Bad" },
+          ],
+        },
       ],
       [
         "/CampaignManagement/v13/Campaigns",
@@ -252,7 +259,10 @@ describe("dedicated service request contracts", () => {
       [
         "/CampaignManagement/v13/AdGroups",
         "POST",
-        { CampaignId: "8000000000000001", AdGroups: [{ Name: "Group" }] },
+        {
+          CampaignId: "8000000000000001",
+          AdGroups: [{ Status: "Paused", Name: "Group" }],
+        },
       ],
       [
         "/CampaignManagement/v13/AdGroups",
@@ -267,7 +277,10 @@ describe("dedicated service request contracts", () => {
       [
         "/CampaignManagement/v13/Ads",
         "POST",
-        { AdGroupId: "8100000000000001", Ads: [{ Type: "ResponsiveSearchAd" }] },
+        {
+          AdGroupId: "8100000000000001",
+          Ads: [{ Status: "Paused", Type: "ResponsiveSearchAd" }],
+        },
       ],
       [
         "/CampaignManagement/v13/Ads",
@@ -284,7 +297,7 @@ describe("dedicated service request contracts", () => {
         "POST",
         {
           AdGroupId: "8100000000000001",
-          Keywords: [{ Text: "shoes", MatchType: "Exact" }],
+          Keywords: [{ Status: "Paused", Text: "shoes", MatchType: "Exact" }],
         },
       ],
       [
@@ -923,6 +936,56 @@ describe("dedicated service request contracts", () => {
     expect(sent.Ads[0]?.Descriptions).toEqual([
       { Asset: { Text: "A description", Type: "TextAsset" } },
     ]);
+  });
+
+  test("update_ads wraps ad copy as asset links exactly like create", async () => {
+    mock.queue("v13/Ads", { json: {} });
+
+    // Update used to skip the normalization create applied, so a plain-string
+    // headline went out raw and failed with error 6206.
+    await updateAds(IDS, "8100000000000001", [
+      {
+        Id: "8200000000000001",
+        Type: "ResponsiveSearch",
+        Headlines: ["Plain string", { Text: "Text object" }],
+        Descriptions: ["A description"],
+      },
+    ]);
+
+    const call = callEnding("/CampaignManagement/v13/Ads");
+    expect(call.method).toBe("PUT");
+    expect(call.body).toEqual({
+      AdGroupId: "8100000000000001",
+      Ads: [
+        {
+          Id: "8200000000000001",
+          Type: "ResponsiveSearch",
+          Headlines: [
+            { Asset: { Text: "Plain string", Type: "TextAsset" } },
+            { Asset: { Text: "Text object", Type: "TextAsset" } },
+          ],
+          Descriptions: [{ Asset: { Text: "A description", Type: "TextAsset" } }],
+        },
+      ],
+    });
+  });
+
+  test("service-level writes apply the same guardrails as the tools", async () => {
+    await expect(
+      addCampaigns(IDS, [{ Name: "Dsa", CampaignType: "DynamicSearchAds" }]),
+    ).rejects.toThrow(/no longer a valid campaign type/);
+    await expect(
+      addKeywords(IDS, "8100000000000001", [{ Text: "shoes", MatchType: "Content" }]),
+    ).rejects.toThrow(/removed in v13/);
+    await expect(
+      updateKeywords(IDS, "8100000000000001", [
+        { Id: "8300000000000001", BiddingScheme: { Type: "ManualCpc" } },
+      ]),
+    ).rejects.toThrow(/keyword level/);
+    await expect(
+      updateKeywords(IDS, "8100000000000001", [{ Id: "8300000000000001" }]),
+    ).rejects.toThrow(/No fields to update on a keyword/);
+    expect(mock.calls.filter((call) => call.url.includes("/v13/"))).toHaveLength(0);
   });
 
   test("an unfiltered ad read still sends every ad type", async () => {

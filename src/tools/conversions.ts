@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as capi from "@/services/capi";
 import * as cv from "@/services/conversions";
-import { ACCOUNT_ARGS, ids, WRITE } from "@/tools/_shared";
+import { ACCOUNT_ARGS, ID, ids, WRITE } from "@/tools/_shared";
 import { BATCH_LIMITS } from "@/utils/batch";
 import {
   COLLECTION_LIMIT,
@@ -26,7 +26,7 @@ export function registerConversionTools(server: McpServer): void {
     inputSchema: {
       ...ACCOUNT_ARGS,
       tag_ids: z
-        .array(z.string())
+        .array(ID)
         .max(MAX_COLLECTION_LIMIT)
         .optional()
         .describe("Specific ids; omit for all."),
@@ -34,12 +34,9 @@ export function registerConversionTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const tags = await cv.getUetTags(
-        scope,
-        Array.isArray(args.tag_ids) ? args.tag_ids.map(String) : undefined,
-      );
+      const tags = await cv.getUetTags(scope, args.tag_ids);
       return collectionEnvelope("uet_tags", tags, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -62,9 +59,9 @@ export function registerConversionTools(server: McpServer): void {
         .min(1)
         .max(BATCH_LIMITS.uetTags),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return cv.addUetTags(scope, args.uet_tags as Record<string, unknown>[]);
+      return cv.addUetTags(scope, args.uet_tags);
     }),
   );
 
@@ -79,7 +76,7 @@ export function registerConversionTools(server: McpServer): void {
       "TrackingStatus is worth reading closely: a goal that has never recorded a conversion usually means the UET tag is missing or misconfigured, not that nothing converted.",
     inputSchema: {
       ...ACCOUNT_ARGS,
-      goal_ids: z.array(z.string()).max(MAX_COLLECTION_LIMIT).optional(),
+      goal_ids: z.array(ID).max(MAX_COLLECTION_LIMIT).optional(),
       goal_types: z
         .array(z.enum(cv.CONVERSION_GOAL_FILTER_TYPES))
         .optional()
@@ -91,13 +88,9 @@ export function registerConversionTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const goals = await cv.getConversionGoals(
-        scope,
-        Array.isArray(args.goal_ids) ? args.goal_ids.map(String) : undefined,
-        Array.isArray(args.goal_types) ? args.goal_types.map(String) : undefined,
-      );
+      const goals = await cv.getConversionGoals(scope, args.goal_ids, args.goal_types);
       return collectionEnvelope("conversion_goals", goals, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -127,7 +120,7 @@ Scope is immutable after creation. An OfflineConversionGoal needs about 2 hours 
               GoalCategory: z
                 .enum(cv.CONVERSION_GOAL_CATEGORIES)
                 .describe("Required on create. Supported values vary by goal Type."),
-              TagId: z.string().optional().describe("UET tag id feeding this goal."),
+              TagId: ID.optional().describe("UET tag id feeding this goal."),
               Scope: z
                 .enum(["Account", "Customer"])
                 .optional()
@@ -147,12 +140,9 @@ Scope is immutable after creation. An OfflineConversionGoal needs about 2 hours 
         .min(1)
         .max(BATCH_LIMITS.conversionGoals),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return cv.addConversionGoals(
-        scope,
-        args.conversion_goals as Record<string, unknown>[],
-      );
+      return cv.addConversionGoals(scope, args.conversion_goals);
     }),
   );
 
@@ -168,7 +158,7 @@ Each entry needs its Id and Type. Scope cannot be changed after creation.`,
         .array(
           z
             .object({
-              Id: z.string(),
+              Id: ID,
               Type: z.enum(cv.CONVERSION_GOAL_TYPES),
               Name: z.string().max(100).optional(),
               ConversionWindowInMinutes: z.number().int().min(1).max(129_600).optional(),
@@ -181,12 +171,9 @@ Each entry needs its Id and Type. Scope cannot be changed after creation.`,
         .min(1)
         .max(BATCH_LIMITS.conversionGoals),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return cv.updateConversionGoals(
-        scope,
-        args.conversion_goals as Record<string, unknown>[],
-      );
+      return cv.updateConversionGoals(scope, args.conversion_goals);
     }),
   );
 
@@ -244,34 +231,32 @@ This operation returns no per-item confirmation. An empty error list is the only
         .min(1)
         .max(BATCH_LIMITS.offlineConversions),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const conversions = (args.conversions as Array<Record<string, unknown>>).map(
-        (c) => ({
-          conversionName: String(c.conversion_name),
-          conversionTime: String(c.conversion_time),
-          ...(c.microsoft_click_id
-            ? { microsoftClickId: String(c.microsoft_click_id) }
-            : {}),
-          ...(c.email ? { email: String(c.email) } : {}),
-          ...(c.phone ? { phone: String(c.phone) } : {}),
-          ...(c.default_country_code
-            ? { defaultCountryCode: String(c.default_country_code) }
-            : {}),
-          ...(c.conversion_value !== undefined
-            ? { conversionValue: Number(c.conversion_value) }
-            : {}),
-          ...(c.conversion_currency_code
-            ? { conversionCurrencyCode: String(c.conversion_currency_code) }
-            : {}),
-          ...(c.external_attribution_credit !== undefined
-            ? { externalAttributionCredit: Number(c.external_attribution_credit) }
-            : {}),
-          ...(c.external_attribution_model
-            ? { externalAttributionModel: String(c.external_attribution_model) }
-            : {}),
-        }),
-      );
+      const conversions = args.conversions.map((c) => ({
+        conversionName: String(c.conversion_name),
+        conversionTime: String(c.conversion_time),
+        ...(c.microsoft_click_id
+          ? { microsoftClickId: String(c.microsoft_click_id) }
+          : {}),
+        ...(c.email ? { email: String(c.email) } : {}),
+        ...(c.phone ? { phone: String(c.phone) } : {}),
+        ...(c.default_country_code
+          ? { defaultCountryCode: String(c.default_country_code) }
+          : {}),
+        ...(c.conversion_value !== undefined
+          ? { conversionValue: Number(c.conversion_value) }
+          : {}),
+        ...(c.conversion_currency_code
+          ? { conversionCurrencyCode: String(c.conversion_currency_code) }
+          : {}),
+        ...(c.external_attribution_credit !== undefined
+          ? { externalAttributionCredit: Number(c.external_attribution_credit) }
+          : {}),
+        ...(c.external_attribution_model
+          ? { externalAttributionModel: String(c.external_attribution_model) }
+          : {}),
+      }));
       return cv.applyOfflineConversions(scope, conversions);
     }),
   );
@@ -309,30 +294,28 @@ conversion_time identifies the ORIGINAL conversion; adjustment_time is when the 
         .min(1)
         .max(BATCH_LIMITS.offlineConversions),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const adjustments = (args.adjustments as Array<Record<string, unknown>>).map(
-        (a) => ({
-          conversionName: String(a.conversion_name),
-          conversionTime: String(a.conversion_time),
-          adjustmentTime: String(a.adjustment_time),
-          adjustmentType: a.adjustment_type as "Restate" | "Retract",
-          ...(a.adjustment_value !== undefined
-            ? { adjustmentValue: Number(a.adjustment_value) }
-            : {}),
-          ...(a.adjustment_currency_code
-            ? { adjustmentCurrencyCode: String(a.adjustment_currency_code) }
-            : {}),
-          ...(a.microsoft_click_id
-            ? { microsoftClickId: String(a.microsoft_click_id) }
-            : {}),
-          ...(a.email ? { email: String(a.email) } : {}),
-          ...(a.phone ? { phone: String(a.phone) } : {}),
-          ...(a.default_country_code
-            ? { defaultCountryCode: String(a.default_country_code) }
-            : {}),
-        }),
-      );
+      const adjustments = args.adjustments.map((a) => ({
+        conversionName: String(a.conversion_name),
+        conversionTime: String(a.conversion_time),
+        adjustmentTime: String(a.adjustment_time),
+        adjustmentType: a.adjustment_type as "Restate" | "Retract",
+        ...(a.adjustment_value !== undefined
+          ? { adjustmentValue: Number(a.adjustment_value) }
+          : {}),
+        ...(a.adjustment_currency_code
+          ? { adjustmentCurrencyCode: String(a.adjustment_currency_code) }
+          : {}),
+        ...(a.microsoft_click_id
+          ? { microsoftClickId: String(a.microsoft_click_id) }
+          : {}),
+        ...(a.email ? { email: String(a.email) } : {}),
+        ...(a.phone ? { phone: String(a.phone) } : {}),
+        ...(a.default_country_code
+          ? { defaultCountryCode: String(a.default_country_code) }
+          : {}),
+      }));
       return cv.applyOfflineConversionAdjustments(scope, adjustments);
     }),
   );
@@ -353,7 +336,7 @@ If the same conversion is also sent by the UET JavaScript tag, use the same tag 
 Up to ${capi.MAX_EVENTS_PER_BATCH} events per call. The result reports eventsReceived (events Microsoft processed); accepted is false when any event was skipped. A warning in the response means the event was accepted with a field silently dropped, which is partial data loss rather than success.`,
     {
       ...ACCOUNT_ARGS,
-      tag_id: z.string().describe("UET tag id owned by the selected account."),
+      tag_id: ID.describe("UET tag id owned by the selected account."),
       events: z
         .array(
           z.object({
@@ -391,10 +374,8 @@ Up to ${capi.MAX_EVENTS_PER_BATCH} events per call. The result reports eventsRec
         .optional()
         .describe("Default true, so one bad event does not fail the batch."),
     },
-    run(async (args: Record<string, unknown>) => {
-      const events: capi.CapiEvent[] = (
-        args.events as Array<Record<string, unknown>>
-      ).map((e) => ({
+    run(async (args) => {
+      const events: capi.CapiEvent[] = args.events.map((e) => ({
         eventType: e.event_type as capi.CapiEventType,
         eventName: String(e.event_name),
         ...(e.event_id ? { eventId: String(e.event_id) } : {}),
@@ -417,7 +398,7 @@ Up to ${capi.MAX_EVENTS_PER_BATCH} events per call. The result reports eventsRec
       }));
 
       const scope = await ids(args);
-      const tagId = String(args.tag_id);
+      const tagId = args.tag_id;
       const authKey = await cv.getUetTagAuthKey(scope, tagId);
       const result = await capi.sendEvents(
         tagId,

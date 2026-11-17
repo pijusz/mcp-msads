@@ -6,6 +6,7 @@ import {
   getUser,
   searchAccounts,
 } from "@/services/accounts";
+import { ID } from "@/tools/_shared";
 import {
   COLLECTION_LIMIT,
   collectionEnvelope,
@@ -34,7 +35,7 @@ export function registerAccountTools(server: McpServer): void {
     },
     handler: async (args) => {
       const filter = typeof args.filter === "string" ? args.filter : "";
-      const limit = Number(args.limit ?? DEFAULT_COLLECTION_LIMIT);
+      const limit = args.limit ?? DEFAULT_COLLECTION_LIMIT;
       const accounts = await findAccountsOrCustomers(
         filter,
         Math.min(limit + 1, MAX_COLLECTION_LIMIT),
@@ -107,7 +108,7 @@ export function registerAccountTools(server: McpServer): void {
                 }
               : {}),
           })),
-          { limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT) },
+          { limit: args.limit ?? DEFAULT_COLLECTION_LIMIT },
         ),
       };
     },
@@ -123,16 +124,15 @@ export function registerAccountTools(server: McpServer): void {
       "Accounts under one manager (customer) account. Lighter than list_accounts when you already know the customer_id. " +
       "Set only_parent_accounts to list just the top level of a nested hierarchy.",
     inputSchema: {
-      customer_id: z
-        .string()
-        .optional()
-        .describe("Manager account id. Defaults to MSADS_CUSTOMER_ID."),
+      customer_id: ID.optional().describe(
+        "Manager account id. Defaults to MSADS_CUSTOMER_ID.",
+      ),
       only_parent_accounts: z.boolean().optional(),
       limit: COLLECTION_LIMIT,
     },
     handler: async (args) => {
       const accounts = await getAccountsInfo(
-        args.customer_id ? String(args.customer_id) : undefined,
+        args.customer_id,
         args.only_parent_accounts === true,
       );
       return collectionEnvelope(
@@ -143,7 +143,7 @@ export function registerAccountTools(server: McpServer): void {
           account_number: a.Number,
           status: a.AccountLifeCycleStatus,
         })),
-        { limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT) },
+        { limit: args.limit ?? DEFAULT_COLLECTION_LIMIT },
       );
     },
   });
@@ -158,10 +158,10 @@ export function registerAccountTools(server: McpServer): void {
       "Full detail for one ad account — currency, time zone, language, account mode, financial status, and the parent customer id. " +
       "Currency matters when reading spend from reports: all monetary report values are in the account's own currency.",
     inputSchema: {
-      account_id: z.string().describe("Numeric ad account id."),
+      account_id: ID.describe("Numeric ad account id."),
     },
     handler: async (args) => {
-      const id = String(args.account_id);
+      const id = args.account_id;
       const accounts = await searchAccounts([
         { Field: "AccountId", Operator: "Equals", Value: id },
       ]);

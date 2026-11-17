@@ -1,12 +1,8 @@
-import type { AccountIds } from "@/services/campaigns";
-import { msadsFetch } from "@/services/msads-api";
+import { batchWrite, type EntitySpec } from "@/services/batch-write";
+import { msadsFetch, type Scope } from "@/services/msads-api";
 import { hashEmail, hashPhone } from "@/services/pii";
-import {
-  assertBatchLimit,
-  BATCH_LIMITS,
-  type BatchResult,
-  mapBatchResult,
-} from "@/utils/batch";
+import { normalizeTypeAlias } from "@/services/wire-types";
+import { assertBatchLimit, BATCH_LIMITS, type BatchResult } from "@/utils/batch";
 import { MsAdsError, readPartialErrors } from "@/utils/errors";
 
 /**
@@ -20,7 +16,7 @@ import { MsAdsError, readPartialErrors } from "@/utils/errors";
 /* ------------------------------- UET ------------------------------- */
 
 export async function getUetTags(
-  ids: AccountIds,
+  ids: Scope,
   tagIds?: string[],
 ): Promise<Record<string, unknown>[]> {
   const res = await msadsFetch<{ UetTags?: Record<string, unknown>[] }>(
@@ -31,28 +27,27 @@ export async function getUetTags(
   return res.UetTags ?? [];
 }
 
-export async function addUetTags(
-  ids: AccountIds,
-  tags: Record<string, unknown>[],
-): Promise<BatchResult> {
-  assertBatchLimit(tags, BATCH_LIMITS.uetTags, "UET tags");
-  const res = await msadsFetch<Record<string, unknown>>("CampaignManagement", "UetTags", {
-    method: "POST",
-    body: { UetTags: tags },
-    ...ids,
-  });
+const UET_TAGS: EntitySpec = {
+  path: "UetTags",
+  list: "UetTags",
+  idField: "UetTagIds",
+  limit: BATCH_LIMITS.uetTags,
+  what: "UET tags",
+  label: (t) => String(t.Name ?? ""),
   // AddUetTags returns the created tags rather than a bare id array.
   // A null slot is Microsoft's per-item failure marker, so it must survive
   // rather than being dereferenced.
-  const created = Array.isArray(res.UetTags)
-    ? (res.UetTags as Array<{ Id?: unknown } | null>)
-    : [];
-  return mapBatchResult(
-    { UetTagIds: created.map((t) => t?.Id ?? null), ...res },
-    "UetTagIds",
-    tags.map((t) => String(t.Name ?? "")),
-    tags.length,
-  );
+  addedIds: (res) =>
+    Array.isArray(res.UetTags)
+      ? (res.UetTags as Array<{ Id?: unknown } | null>).map((t) => t?.Id ?? null)
+      : [],
+};
+
+export function addUetTags(
+  ids: Scope,
+  tags: Record<string, unknown>[],
+): Promise<BatchResult> {
+  return batchWrite(UET_TAGS, "add", ids, undefined, tags);
 }
 
 /**
@@ -65,7 +60,7 @@ export async function addUetTags(
  * Note the key is only *created* for the tag's owner; someone with shared
  * access can read an existing key but not mint one.
  */
-export async function getUetTagAuthKey(ids: AccountIds, tagId: string): Promise<string> {
+export async function getUetTagAuthKey(ids: Scope, tagId: string): Promise<string> {
   const res = await msadsFetch<{
     UetTagAuthKey?: string;
     TagAuthKey?: { AuthKey?: string };
@@ -96,16 +91,19 @@ export async function getUetTagAuthKey(ids: AccountIds, tagId: string): Promise<
  * which the SDK deserializer accepts too, so both spellings are accepted as
  * input and normalized to the enum value on the wire.
  */
+// Listed in the order the read filter sends them (see CONVERSION_GOAL_FILTER_TYPES).
 const GOAL_TYPE_ENUM = [
   "Url",
-  "Event",
   "Duration",
   "PagesViewedPerVisit",
+  "Event",
   "AppInstall",
-  "AppDownload",
   "OfflineConversion",
+  "AppDownload",
   "InStoreTransaction",
 ] as const;
+
+const GOAL_TYPE_ALIASES = { suffix: "Goal", allowed: new Set<string>(GOAL_TYPE_ENUM) };
 
 export const CONVERSION_GOAL_TYPES = [
   ...GOAL_TYPE_ENUM,
@@ -115,8 +113,7 @@ export const CONVERSION_GOAL_TYPES = [
 /** `UrlGoal` → `Url`; enum values pass through unchanged. */
 export function normalizeConversionGoalType(type: unknown): unknown {
   if (typeof type !== "string") return type;
-  const short = type.endsWith("Goal") ? type.slice(0, -"Goal".length) : type;
-  return (GOAL_TYPE_ENUM as readonly string[]).includes(short) ? short : type;
+  return normalizeTypeAlias(type, GOAL_TYPE_ALIASES) ?? type;
 }
 
 /**
@@ -141,12 +138,6 @@ export const CONVERSION_GOAL_CATEGORIES = [
   "Other",
 ] as const;
 
-function normalizeGoals(goals: Record<string, unknown>[]): Record<string, unknown>[] {
-  return goals.map((g) =>
-    "Type" in g ? { ...g, Type: normalizeConversionGoalType(g.Type) } : g,
-  );
-}
-
 /**
  * The enum used to filter reads. It is the same ConversionGoalType enum, but
  * passed as a comma-delimited flags string.
@@ -156,18 +147,13 @@ function normalizeGoals(goals: Record<string, unknown>[]): Record<string, unknow
  * InStoreTransactionPilotNotEnabledForCustomer on any account without it.
  * Callers who have the pilot can pass it explicitly.
  */
-export const CONVERSION_GOAL_FILTER_TYPES = [
-  "Url",
-  "Duration",
-  "PagesViewedPerVisit",
-  "Event",
-  "AppInstall",
-  "OfflineConversion",
-  "AppDownload",
-] as const;
+type FilterGoalType = Exclude<(typeof GOAL_TYPE_ENUM)[number], "InStoreTransaction">;
+export const CONVERSION_GOAL_FILTER_TYPES = GOAL_TYPE_ENUM.filter(
+  (t): t is FilterGoalType => t !== "InStoreTransaction",
+) as [FilterGoalType, ...FilterGoalType[]];
 
 export async function getConversionGoals(
-  ids: AccountIds,
+  ids: Scope,
   goalIds?: string[],
   goalTypes?: string[],
 ): Promise<Record<string, unknown>[]> {
@@ -189,40 +175,28 @@ export async function getConversionGoals(
   return res.ConversionGoals ?? [];
 }
 
-export async function addConversionGoals(
-  ids: AccountIds,
+const CONVERSION_GOALS: EntitySpec = {
+  path: "ConversionGoals",
+  list: "ConversionGoals",
+  idField: "ConversionGoalIds",
+  limit: BATCH_LIMITS.conversionGoals,
+  what: "conversion goals",
+  toWire: (g) => ("Type" in g ? { ...g, Type: normalizeConversionGoalType(g.Type) } : g),
+  label: (g, op) => String(op === "add" ? (g.Name ?? "") : (g.Name ?? g.Id ?? "")),
+};
+
+export function addConversionGoals(
+  ids: Scope,
   goals: Record<string, unknown>[],
 ): Promise<BatchResult> {
-  assertBatchLimit(goals, BATCH_LIMITS.conversionGoals, "conversion goals");
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    "ConversionGoals",
-    { method: "POST", body: { ConversionGoals: normalizeGoals(goals) }, ...ids },
-  );
-  return mapBatchResult(
-    res,
-    "ConversionGoalIds",
-    goals.map((g) => String(g.Name ?? "")),
-    goals.length,
-  );
+  return batchWrite(CONVERSION_GOALS, "add", ids, undefined, goals);
 }
 
-export async function updateConversionGoals(
-  ids: AccountIds,
+export function updateConversionGoals(
+  ids: Scope,
   goals: Record<string, unknown>[],
 ): Promise<BatchResult> {
-  assertBatchLimit(goals, BATCH_LIMITS.conversionGoals, "conversion goals");
-  const res = await msadsFetch<Record<string, unknown>>(
-    "CampaignManagement",
-    "ConversionGoals",
-    { method: "PUT", body: { ConversionGoals: normalizeGoals(goals) }, ...ids },
-  );
-  return mapBatchResult(
-    { ConversionGoalIds: goals.map((g) => g.Id ?? null), ...res },
-    "ConversionGoalIds",
-    goals.map((g) => String(g.Name ?? g.Id ?? "")),
-    goals.length,
-  );
+  return batchWrite(CONVERSION_GOALS, "update", ids, undefined, goals);
 }
 
 /* ------------------------ Offline conversions ------------------------ */
@@ -331,7 +305,7 @@ export interface ApplyResult {
 }
 
 export async function applyOfflineConversions(
-  ids: AccountIds,
+  ids: Scope,
   conversions: OfflineConversionInput[],
 ): Promise<ApplyResult> {
   assertBatchLimit(conversions, BATCH_LIMITS.offlineConversions, "offline conversions");
@@ -371,7 +345,7 @@ export interface OfflineAdjustmentInput {
 }
 
 export async function applyOfflineConversionAdjustments(
-  ids: AccountIds,
+  ids: Scope,
   adjustments: OfflineAdjustmentInput[],
 ): Promise<ApplyResult> {
   assertBatchLimit(adjustments, BATCH_LIMITS.offlineConversions, "adjustments");

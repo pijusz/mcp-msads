@@ -2,13 +2,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as ai from "@/services/ad-insight";
 import { MATCH_TYPES } from "@/services/guardrails";
-import { toMsDate } from "@/services/reporting";
-import { ACCOUNT_ARGS, ids } from "@/tools/_shared";
+import { ACCOUNT_ARGS, ID, ids } from "@/tools/_shared";
 import {
   COLLECTION_LIMIT,
   collectionEnvelope,
   DEFAULT_COLLECTION_LIMIT,
 } from "@/utils/collection";
+import { toMsDate } from "@/utils/dates";
 import { defineRead } from "@/utils/define-read";
 
 const SANDBOX_NOTE =
@@ -71,25 +71,23 @@ export function registerInsightTools(server: McpServer): void {
     handler: async (args) => {
       const scope = await ids(args);
       const ideas = await ai.getKeywordIdeas(scope, {
-        ...(Array.isArray(args.queries) ? { queries: args.queries.map(String) } : {}),
-        ...(args.url ? { url: String(args.url) } : {}),
-        locationIds: (args.location_ids as number[]).map(Number),
-        language: args.language ? String(args.language) : "English",
-        ...(args.network ? { network: String(args.network) } : {}),
+        ...(args.queries ? { queries: args.queries } : {}),
+        ...(args.url ? { url: args.url } : {}),
+        locationIds: args.location_ids,
+        language: args.language || "English",
+        ...(args.network ? { network: args.network } : {}),
         ...(args.expand_ideas !== undefined
           ? { expandIdeas: args.expand_ideas === true }
           : {}),
-        ...(Array.isArray(args.attributes)
-          ? { attributes: args.attributes.map(String) }
-          : {}),
+        ...(args.attributes ? { attributes: args.attributes } : {}),
         ...(args.min_search_volume !== undefined
-          ? { minSearchVolume: Number(args.min_search_volume) }
+          ? { minSearchVolume: args.min_search_volume }
           : {}),
         ...(args.max_search_volume !== undefined
-          ? { maxSearchVolume: Number(args.max_search_volume) }
+          ? { maxSearchVolume: args.max_search_volume }
           : {}),
-        ...(Array.isArray(args.competition_levels)
-          ? { competitionLevels: args.competition_levels.map(String) }
+        ...(args.competition_levels
+          ? { competitionLevels: args.competition_levels }
           : {}),
         ...(args.exclude_account_keywords === true
           ? { excludeAccountKeywords: true }
@@ -97,7 +95,7 @@ export function registerInsightTools(server: McpServer): void {
       });
 
       return collectionEnvelope("ideas", ideas, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         guidance:
           "Tighten the search-volume or competition_levels filters, or raise limit.",
       });
@@ -151,9 +149,7 @@ export function registerInsightTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const keywords = (
-        args.keywords as Array<{ text: string; match_type: string; max_cpc?: number }>
-      ).map((k) => ({
+      const keywords = args.keywords.map((k) => ({
         text: k.text,
         matchType: k.match_type,
         ...(k.max_cpc !== undefined ? { maxCpc: k.max_cpc } : {}),
@@ -161,19 +157,15 @@ export function registerInsightTools(server: McpServer): void {
 
       const estimates = await ai.getKeywordTrafficEstimates(scope, {
         keywords,
-        ...(args.max_cpc !== undefined ? { maxCpc: Number(args.max_cpc) } : {}),
-        ...(args.daily_budget !== undefined
-          ? { dailyBudget: Number(args.daily_budget) }
-          : {}),
-        locationIds: (args.location_ids as number[]).map(Number),
-        ...(args.language ? { language: String(args.language) } : {}),
-        ...(args.network ? { network: String(args.network) } : {}),
-        ...(Array.isArray(args.negative_keywords)
-          ? { negativeKeywords: args.negative_keywords.map(String) }
-          : {}),
+        ...(args.max_cpc !== undefined ? { maxCpc: args.max_cpc } : {}),
+        ...(args.daily_budget !== undefined ? { dailyBudget: args.daily_budget } : {}),
+        locationIds: args.location_ids,
+        ...(args.language ? { language: args.language } : {}),
+        ...(args.network ? { network: args.network } : {}),
+        ...(args.negative_keywords ? { negativeKeywords: args.negative_keywords } : {}),
       });
       return collectionEnvelope("campaign_estimates", estimates, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -196,14 +188,14 @@ export function registerInsightTools(server: McpServer): void {
       const scope = await ids(args);
       const keywords = await ai.suggestKeywordsForUrl(
         scope,
-        String(args.url),
-        Number(args.max_keywords ?? DEFAULT_COLLECTION_LIMIT),
-        args.language ? String(args.language) : undefined,
+        args.url,
+        args.max_keywords ?? DEFAULT_COLLECTION_LIMIT,
+        args.language,
       );
       return {
-        url: String(args.url),
+        url: args.url,
         ...collectionEnvelope("keywords", keywords, {
-          limit: Number(args.max_keywords ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.max_keywords ?? DEFAULT_COLLECTION_LIMIT,
         }),
       };
     },
@@ -238,21 +230,15 @@ export function registerInsightTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const counts = await ai.getHistoricalSearchCount(
-        scope,
-        (args.keywords as string[]).map(String),
-        {
-          ...(args.start_date ? { startDate: toMsDate(String(args.start_date)) } : {}),
-          ...(args.end_date ? { endDate: toMsDate(String(args.end_date)) } : {}),
-          ...(args.time_period_rollup
-            ? { timePeriodRollup: String(args.time_period_rollup) }
-            : {}),
-          ...(args.language ? { language: String(args.language) } : {}),
-          ...(Array.isArray(args.devices) ? { devices: args.devices.map(String) } : {}),
-        },
-      );
+      const counts = await ai.getHistoricalSearchCount(scope, args.keywords, {
+        ...(args.start_date ? { startDate: toMsDate(args.start_date) } : {}),
+        ...(args.end_date ? { endDate: toMsDate(args.end_date) } : {}),
+        ...(args.time_period_rollup ? { timePeriodRollup: args.time_period_rollup } : {}),
+        ...(args.language ? { language: args.language } : {}),
+        ...(args.devices ? { devices: args.devices } : {}),
+      });
       return collectionEnvelope("search_counts", counts, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -267,7 +253,7 @@ export function registerInsightTools(server: McpServer): void {
       SANDBOX_NOTE,
     inputSchema: {
       ...ACCOUNT_ARGS,
-      keyword_ids: z.array(z.string()).min(1).max(1000).describe("Keyword ids."),
+      keyword_ids: z.array(ID).min(1).max(1000).describe("Keyword ids."),
       include_current_bid: z.boolean().optional().describe("Default true."),
       limit: COLLECTION_LIMIT,
     },
@@ -275,11 +261,11 @@ export function registerInsightTools(server: McpServer): void {
       const scope = await ids(args);
       const landscape = await ai.getBidLandscape(
         scope,
-        (args.keyword_ids as string[]).map(String),
+        args.keyword_ids,
         args.include_current_bid !== false,
       );
       return collectionEnvelope("bid_landscape", landscape, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -296,7 +282,7 @@ export function registerInsightTools(server: McpServer): void {
       entity_type: z
         .enum(["Account", "Campaign", "AdGroup", "Keyword"])
         .describe("What the entity ids refer to."),
-      entity_ids: z.array(z.string()).min(1).max(200),
+      entity_ids: z.array(ID).min(1).max(200),
       start_date: z.string().describe("YYYY-MM-DD."),
       end_date: z.string().describe("YYYY-MM-DD."),
       limit: COLLECTION_LIMIT,
@@ -305,10 +291,10 @@ export function registerInsightTools(server: McpServer): void {
       const scope = await ids(args);
       const response = await ai.getAuctionInsight(
         scope,
-        String(args.entity_type),
-        (args.entity_ids as string[]).map(String),
-        toMsDate(String(args.start_date)),
-        toMsDate(String(args.end_date)),
+        args.entity_type,
+        args.entity_ids,
+        toMsDate(args.start_date),
+        toMsDate(args.end_date),
       );
       const entries = Array.isArray(response.AuctionInsightEntries)
         ? (response.AuctionInsightEntries as Record<string, unknown>[])
@@ -317,7 +303,7 @@ export function registerInsightTools(server: McpServer): void {
       return {
         ...metadata,
         ...collectionEnvelope("AuctionInsightEntries", entries, {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         }),
       };
     },

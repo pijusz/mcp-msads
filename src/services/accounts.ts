@@ -1,6 +1,6 @@
 import { getEnv } from "@/config/env";
 import { cached, tokenKey } from "@/services/cache";
-import { msadsFetch } from "@/services/msads-api";
+import { msadsFetch, type Scope } from "@/services/msads-api";
 import { MsAdsError } from "@/utils/errors";
 
 /**
@@ -174,9 +174,7 @@ export async function accountDirectory(): Promise<AccountInfo[]> {
   return cached(key, HIERARCHY_TTL_MS, () => findAccountsOrCustomers());
 }
 
-export interface ResolvedAccount {
-  accountId: string;
-  customerId?: string;
+export interface ResolvedAccount extends Scope {
   accountName?: string;
 }
 

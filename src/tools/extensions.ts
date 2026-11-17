@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as ext from "@/services/extensions";
-import { AD_EXTENSION_UPDATE_WARNING } from "@/services/guardrails";
-import { ACCOUNT_ARGS, ids, WRITE } from "@/tools/_shared";
+import { AD_EXTENSION_UPDATE_WARNING, NEGATIVE_MATCH_TYPES } from "@/services/guardrails";
+import { ACCOUNT_ARGS, ID, ids, WRITE } from "@/tools/_shared";
 import { BATCH_LIMITS } from "@/utils/batch";
 import {
   COLLECTION_LIMIT,
@@ -32,7 +32,7 @@ export function registerExtensionTools(server: McpServer): void {
         .enum(ext.AD_EXTENSION_TYPES)
         .describe("Which extension type to list."),
       extension_ids: z
-        .array(z.string())
+        .array(ID)
         .max(MAX_COLLECTION_LIMIT)
         .optional()
         .describe("Specific ids; omit for all."),
@@ -40,15 +40,13 @@ export function registerExtensionTools(server: McpServer): void {
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const type = String(args.extension_type);
+      const type = args.extension_type;
 
-      const explicit = Array.isArray(args.extension_ids)
-        ? args.extension_ids.map(String)
-        : null;
+      const explicit = args.extension_ids ?? null;
       if (explicit) {
         const extensions = await ext.getAdExtensionsByIds(scope, explicit, type);
         return collectionEnvelope("ad_extensions", extensions, {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         });
       }
 
@@ -58,7 +56,7 @@ export function registerExtensionTools(server: McpServer): void {
       if (foundIds.length === 0) {
         return {
           ...collectionEnvelope("ad_extensions", [], {
-            limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+            limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
           }),
           note: `No ${type} extensions in this account.`,
         };
@@ -67,7 +65,7 @@ export function registerExtensionTools(server: McpServer): void {
       return {
         discovered_extension_ids: foundIds.length,
         ...collectionEnvelope("ad_extensions", extensions, {
-          limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+          limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
         }),
       };
     },
@@ -83,7 +81,7 @@ export function registerExtensionTools(server: McpServer): void {
     inputSchema: {
       ...ACCOUNT_ARGS,
       entity_ids: z
-        .array(z.string())
+        .array(ID)
         .min(1)
         .max(MAX_COLLECTION_LIMIT)
         .describe("Campaign or ad group ids."),
@@ -95,14 +93,12 @@ export function registerExtensionTools(server: McpServer): void {
       const scope = await ids(args);
       const associations = await ext.getAdExtensionAssociations(
         scope,
-        (args.entity_ids as string[]).map(String),
-        String(args.association_type),
-        Array.isArray(args.extension_types)
-          ? args.extension_types.map(String)
-          : undefined,
+        args.entity_ids,
+        args.association_type,
+        args.extension_types,
       );
       return collectionEnvelope("associations", associations, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -133,9 +129,9 @@ Association limits: 20 sitelinks, 20 callouts (but a minimum of 2 before any ser
         .min(1)
         .max(BATCH_LIMITS.adExtensions),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return ext.addAdExtensions(scope, args.ad_extensions as Record<string, unknown>[]);
+      return ext.addAdExtensions(scope, args.ad_extensions);
     }),
   );
 
@@ -150,17 +146,14 @@ This is unlike almost every other entity in this API, which does support partial
     {
       ...ACCOUNT_ARGS,
       ad_extensions: z
-        .array(z.object({ Id: z.string(), Type: z.string() }).passthrough())
+        .array(z.object({ Id: ID, Type: z.string() }).passthrough())
         .min(1)
         .max(BATCH_LIMITS.adExtensions)
         .describe("Complete extension objects — omitted optional fields are CLEARED."),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      const result = await ext.updateAdExtensions(
-        scope,
-        args.ad_extensions as Record<string, unknown>[],
-      );
+      const result = await ext.updateAdExtensions(scope, args.ad_extensions);
       return { ...result, warning: AD_EXTENSION_UPDATE_WARNING };
     }),
   );
@@ -171,11 +164,11 @@ This is unlike almost every other entity in this API, which does support partial
     `${WRITE}Permanently delete ad extensions from the account library, removing them from every campaign and ad group they were associated with. To stop one serving in a single place while keeping it in the library, use remove_ad_extension_associations instead.`,
     {
       ...ACCOUNT_ARGS,
-      extension_ids: z.array(z.string()).min(1).max(BATCH_LIMITS.adExtensions),
+      extension_ids: z.array(ID).min(1).max(BATCH_LIMITS.adExtensions),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return ext.deleteAdExtensions(scope, (args.extension_ids as string[]).map(String));
+      return ext.deleteAdExtensions(scope, args.extension_ids);
     }),
   );
 
@@ -189,19 +182,17 @@ Each association pairs an extension id with an entity id:
     {
       ...ACCOUNT_ARGS,
       associations: z
-        .array(
-          z.object({ AdExtensionId: z.string(), EntityId: z.string() }).passthrough(),
-        )
+        .array(z.object({ AdExtensionId: ID, EntityId: ID }).passthrough())
         .min(1)
         .max(BATCH_LIMITS.adExtensions),
       association_type: ASSOCIATION_TYPE,
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
       return ext.setAdExtensionAssociations(
         scope,
-        args.associations as Record<string, unknown>[],
-        String(args.association_type),
+        args.associations,
+        args.association_type,
       );
     }),
   );
@@ -216,29 +207,28 @@ Each association pairs an extension id with an entity id:
     inputSchema: {
       ...ACCOUNT_ARGS,
       entity_ids: z
-        .array(z.string())
+        .array(ID)
         .min(1)
         .max(1000)
         .describe(
           "Campaign ids, or exactly one ad group id when entity_type is AdGroup.",
         ),
       entity_type: z.enum(["Campaign", "AdGroup"]),
-      parent_campaign_id: z
-        .string()
-        .optional()
-        .describe("Required for AdGroup: the id of its containing campaign."),
+      parent_campaign_id: ID.optional().describe(
+        "Required for AdGroup: the id of its containing campaign.",
+      ),
       limit: COLLECTION_LIMIT,
     },
     handler: async (args) => {
       const scope = await ids(args);
       const result = await ext.getNegativeKeywords(
         scope,
-        (args.entity_ids as string[]).map(String),
-        args.entity_type as "Campaign" | "AdGroup",
-        args.parent_campaign_id ? String(args.parent_campaign_id) : undefined,
+        args.entity_ids,
+        args.entity_type,
+        args.parent_campaign_id,
       );
       return collectionEnvelope("entity_negative_keywords", result, {
-        limit: Number(args.limit ?? DEFAULT_COLLECTION_LIMIT),
+        limit: args.limit ?? DEFAULT_COLLECTION_LIMIT,
       });
     },
   });
@@ -251,20 +241,20 @@ Each association pairs an extension id with an entity id:
 Removing a negative WIDENS what the ads can show on, so it can increase spend. Take the ids from list_negative_keywords — an over-broad negative throttling good traffic is a common cause of sudden volume loss.`,
     {
       ...ACCOUNT_ARGS,
-      entity_id: z.string().describe("Campaign or ad group id."),
+      entity_id: ID.describe("Campaign or ad group id."),
       entity_type: z.enum(["Campaign", "AdGroup"]),
       keyword_ids: z
-        .array(z.string())
+        .array(ID)
         .min(1)
         .describe("Negative keyword ids from list_negative_keywords."),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
       return ext.deleteNegativeKeywords(
         scope,
-        String(args.entity_id),
-        args.entity_type as "Campaign" | "AdGroup",
-        (args.keyword_ids as string[]).map(String),
+        args.entity_id,
+        args.entity_type,
+        args.keyword_ids,
       );
     }),
   );
@@ -278,19 +268,17 @@ This is what delete_ad_extensions points at: use this to stop an extension servi
     {
       ...ACCOUNT_ARGS,
       associations: z
-        .array(
-          z.object({ AdExtensionId: z.string(), EntityId: z.string() }).passthrough(),
-        )
+        .array(z.object({ AdExtensionId: ID, EntityId: ID }).passthrough())
         .min(1)
         .max(BATCH_LIMITS.adExtensions),
       association_type: ASSOCIATION_TYPE,
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
       return ext.deleteAdExtensionAssociations(
         scope,
-        args.associations as Record<string, unknown>[],
-        String(args.association_type),
+        args.associations,
+        args.association_type,
       );
     }),
   );
@@ -304,7 +292,7 @@ This is what delete_ad_extensions points at: use this to stop an extension servi
     inputSchema: {
       ...ACCOUNT_ARGS,
       label_ids: z
-        .array(z.string())
+        .array(ID)
         .max(MAX_COLLECTION_LIMIT)
         .optional()
         .describe("Specific ids; omit for all."),
@@ -313,14 +301,9 @@ This is what delete_ad_extensions points at: use this to stop an extension servi
     },
     handler: async (args) => {
       const scope = await ids(args);
-      const pageIndex = Number(args.page_index ?? 0);
-      const pageSize = Number(args.page_size ?? DEFAULT_COLLECTION_LIMIT);
-      const labels = await ext.getLabels(
-        scope,
-        Array.isArray(args.label_ids) ? args.label_ids.map(String) : undefined,
-        pageIndex,
-        pageSize,
-      );
+      const pageIndex = args.page_index ?? 0;
+      const pageSize = args.page_size ?? DEFAULT_COLLECTION_LIMIT;
+      const labels = await ext.getLabels(scope, args.label_ids, pageIndex, pageSize);
       return {
         page_index: pageIndex,
         ...collectionEnvelope("labels", labels, {
@@ -351,9 +334,9 @@ This is what delete_ad_extensions points at: use this to stop an extension servi
         .min(1)
         .max(BATCH_LIMITS.labels),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return ext.addLabels(scope, args.labels as Record<string, unknown>[]);
+      return ext.addLabels(scope, args.labels);
     }),
   );
 
@@ -366,20 +349,16 @@ Each association pairs a label with an entity: [{ "LabelId": "1", "EntityId": "9
     {
       ...ACCOUNT_ARGS,
       associations: z
-        .array(z.object({ LabelId: z.string(), EntityId: z.string() }).passthrough())
+        .array(z.object({ LabelId: ID, EntityId: ID }).passthrough())
         .min(1)
         .max(BATCH_LIMITS.labels),
       entity_type: z
         .enum(["Campaign", "AdGroup", "Ad", "Keyword"])
         .describe("What the entity ids refer to."),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
-      return ext.setLabelAssociations(
-        scope,
-        args.associations as Record<string, unknown>[],
-        String(args.entity_type),
-      );
+      return ext.setLabelAssociations(scope, args.associations, args.entity_type);
     }),
   );
 
@@ -393,25 +372,25 @@ Negative match types are Phrase and Exact only — there is no broad negative. A
 Limits: up to ${ext.NEGATIVE_KEYWORD_LIMIT} per entity. Campaign-level negatives apply to every ad group beneath.`,
     {
       ...ACCOUNT_ARGS,
-      entity_id: z.string().describe("Campaign or ad group id."),
+      entity_id: ID.describe("Campaign or ad group id."),
       entity_type: z.enum(["Campaign", "AdGroup"]),
       keywords: z
         .array(
           z.object({
             Text: z.string().max(100),
-            MatchType: z.enum(ext.NEGATIVE_MATCH_TYPES),
+            MatchType: z.enum(NEGATIVE_MATCH_TYPES),
           }),
         )
         .min(1)
         .max(ext.NEGATIVE_KEYWORD_LIMIT),
     },
-    run(async (args: Record<string, unknown>) => {
+    run(async (args) => {
       const scope = await ids(args);
       return ext.addNegativeKeywords(
         scope,
-        String(args.entity_id),
-        args.entity_type as "Campaign" | "AdGroup",
-        args.keywords as Array<{ Text: string; MatchType: string }>,
+        args.entity_id,
+        args.entity_type,
+        args.keywords,
       );
     }),
   );

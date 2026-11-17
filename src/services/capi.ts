@@ -259,6 +259,7 @@ export async function sendEvents(
     clearTimeout(timer);
   }
 
+  const response = parseCapiResponse(body);
   if (!res.ok) {
     throw new MsAdsError({
       status: res.status,
@@ -266,34 +267,36 @@ export async function sendEvents(
         res.status === 401
           ? "CAPI rejected the per-tag auth key (HTTP 401); it is not the OAuth access token."
           : `CAPI rejected the batch (HTTP ${res.status}).`,
-      diagnostics: safeCapiDiagnostics(body, authKey),
+      diagnostics: safeCapiDiagnostics(response, authKey),
     });
   }
 
-  const split = splitDiagnostics(body);
-  const errors = sanitizeDiagnostics(split.errors, authKey);
-  const warnings = sanitizeDiagnostics(split.warnings, authKey);
+  const warnings = sanitizeDiagnostics(response.warnings, authKey);
   if (warnings.length > 0) {
     log.warn(
       `CAPI accepted the batch with ${warnings.length} warning(s); the offending fields were dropped.`,
     );
   }
-  const eventsReceived = readEventsReceived(body);
+  const { eventsReceived } = response;
   const dropped =
     eventsReceived === null ? 0 : Math.max(0, events.length - eventsReceived);
+  const errors = sanitizeDiagnostics(response.errors, authKey);
+  const allErrors =
+    errors.length === 0 && dropped > 0
+      ? [
+          {
+            message: `${dropped} of ${events.length} event(s) were not processed, but Microsoft returned no validation details for them.`,
+          },
+        ]
+      : errors;
 
   return {
-    accepted: split.errors.length === 0 && dropped === 0,
+    // An error item with no reportable fields sanitizes away, but still means
+    // an event was dropped — so the raw list counts too.
+    accepted: allErrors.length === 0 && response.errors.length === 0,
     eventsSent: events.length,
     eventsReceived,
-    errors:
-      errors.length === 0 && dropped > 0
-        ? [
-            {
-              message: `${dropped} of ${events.length} event(s) were not processed, but Microsoft returned no validation details for them.`,
-            },
-          ]
-        : errors,
+    errors: allErrors,
     warnings,
   };
 }
@@ -342,60 +345,60 @@ function sanitizeDiagnostics(
     );
 }
 
-function readEventsReceived(body: unknown): number | null {
-  if (!body || typeof body !== "object") return null;
-  const b = body as Record<string, unknown>;
-  const value = b.eventsReceived ?? b.EventsReceived;
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-/** The documented `{ "error": { code, message, details } }` envelope, if present. */
-function errorEnvelope(body: unknown): Record<string, unknown> | null {
-  if (!body || typeof body !== "object") return null;
-  const error = (body as Record<string, unknown>).error;
-  return error && typeof error === "object" && !Array.isArray(error)
-    ? (error as Record<string, unknown>)
-    : null;
-}
-
 /** Reduce provider errors to a bounded, non-secret structure safe for MCP output. */
-export function safeCapiDiagnostics(body: unknown, secret?: string): SafeCapiDiagnostics {
-  const split = splitDiagnostics(body);
+export function safeCapiDiagnostics(
+  response: CapiResponse,
+  secret?: string,
+): SafeCapiDiagnostics {
   // With no itemized details, report the envelope's own code/message.
   const fallback =
-    split.errors.length === 0 && split.warnings.length === 0
-      ? [errorEnvelope(body) ?? body]
+    response.errors.length === 0 && response.warnings.length === 0
+      ? [response.summary]
       : [];
-  const errors = sanitizeDiagnostics([...split.errors, ...fallback], secret);
-  const warnings = sanitizeDiagnostics(split.warnings, secret);
+  const errors = sanitizeDiagnostics([...response.errors, ...fallback], secret);
+  const warnings = sanitizeDiagnostics(response.warnings, secret);
   return {
     errors,
     warnings,
     truncated:
-      split.errors.length + fallback.length > MAX_DIAGNOSTICS ||
-      split.warnings.length > MAX_DIAGNOSTICS,
+      response.errors.length + fallback.length > MAX_DIAGNOSTICS ||
+      response.warnings.length > MAX_DIAGNOSTICS,
   };
 }
 
+/** A CAPI response body, read once. */
+export interface CapiResponse {
+  /** Itemized diagnostics that dropped an event. */
+  errors: unknown[];
+  /** Itemized diagnostics that only stripped an optional field. */
+  warnings: unknown[];
+  /** The `error` envelope (its code/message), or the whole body if there is none. */
+  summary: unknown;
+  eventsReceived: number | null;
+}
+
 /**
- * Separate warnings from errors in the response.
+ * Parse a CAPI response body.
  *
- * Microsoft returns both in one list distinguished by an `isWarning` flag. An
- * error means the event was dropped; a warning means an optional field was
- * removed from an accepted event. The documented shape is
+ * Microsoft returns errors and warnings in one list distinguished by an
+ * `isWarning` flag. An error means the event was dropped; a warning means an
+ * optional field was removed from an accepted event. The documented shape is
  * `{ "error": { "code", "message", "details": [{ index, propertyName,
  * errorMessage, errorCode, isWarning, attemptedValue? }] } }`, on HTTP 400 and
  * on HTTP 200 when continueOnValidationError skipped events or only warnings
  * occurred. Flat `errors` lists are still read for robustness.
  */
-export function splitDiagnostics(body: unknown): {
-  errors: unknown[];
-  warnings: unknown[];
-} {
-  if (!body || typeof body !== "object") return { errors: [], warnings: [] };
+export function parseCapiResponse(body: unknown): CapiResponse {
+  if (!body || typeof body !== "object") {
+    return { errors: [], warnings: [], summary: body, eventsReceived: null };
+  }
 
   const b = body as Record<string, unknown>;
-  const envelope = errorEnvelope(body);
+  const envelope =
+    b.error && typeof b.error === "object" && !Array.isArray(b.error)
+      ? (b.error as Record<string, unknown>)
+      : null;
+  const received = b.eventsReceived ?? b.EventsReceived;
   const list = [
     ...(envelope && Array.isArray(envelope.details) ? envelope.details : []),
     ...(Array.isArray(b.errors) ? b.errors : []),
@@ -412,5 +415,11 @@ export function splitDiagnostics(body: unknown): {
       (item as Record<string, unknown>).isWarning === true;
     (isWarning ? warnings : errors).push(item);
   }
-  return { errors, warnings };
+  return {
+    errors,
+    warnings,
+    summary: envelope ?? body,
+    eventsReceived:
+      typeof received === "number" && Number.isFinite(received) ? received : null,
+  };
 }

@@ -8,8 +8,8 @@ import {
   getSubmittedReport,
   pollDelayMs,
   runReport,
-  toMsDate,
 } from "@/services/reporting";
+import { toMsDate } from "@/utils/dates";
 import { installMockFetch, type MockFetch, setTestEnv, tokenResponse } from "./_mock";
 import { MS_REPORT_ZIP } from "./fixtures/zip-archives";
 
@@ -487,5 +487,33 @@ describe("runReport end to end", () => {
     const result = await getSubmittedReport("rq-5", IDS);
     expect(result.status).toBe("pending");
     expect(mock.callsTo("GenerateReport/Poll")).toHaveLength(1);
+  });
+
+  test("get_report and run_report interpret Error and no-rows identically", async () => {
+    mock.queue(
+      "GenerateReport/Submit",
+      { json: { ReportRequestId: "rq-6" } },
+      { json: { ReportRequestId: "rq-7" } },
+    );
+    mock.queue(
+      "GenerateReport/Poll",
+      { json: { ReportRequestStatus: { Status: "Error" } } },
+      { json: { ReportRequestStatus: { Status: "Error" } } },
+      { json: { ReportRequestStatus: { Status: "Success", ReportDownloadUrl: null } } },
+      { json: { ReportRequestStatus: { Status: "Success", ReportDownloadUrl: null } } },
+    );
+    const input = { reportType: "campaign_performance", accountId: "512300" } as const;
+    const clock = { now: () => 0, sleep: async () => {} };
+
+    const runError = await runReport(input, IDS, { clock }).catch((e: Error) => e);
+    const getError = await getSubmittedReport("rq-6", IDS).catch((e: Error) => e);
+    expect((getError as Error).message).toBe((runError as Error).message);
+    expect((getError as Error).message).toMatch(/Resubmitting sometimes clears/);
+
+    const runEmpty = await runReport(input, IDS, { clock });
+    const getEmpty = await getSubmittedReport("rq-7", IDS);
+    expect(runEmpty.status).toBe("no_data");
+    expect(getEmpty.status).toBe("no_data");
+    expect(getEmpty.message).toBe(runEmpty.message);
   });
 });

@@ -469,3 +469,60 @@ describe("targeting parent scope", () => {
     });
   });
 });
+
+describe("64-bit id arguments", () => {
+  test("accept digit strings past 2^53 and reject anything else before any fetch", async () => {
+    mock.queue("AdGroups/QueryByCampaignId", { json: { AdGroups: [] } });
+    await withClient(async (client) => {
+      for (const campaign_id of ["abc", "-1", "12 34", "1e5", ""]) {
+        const rejected = await client.callTool({
+          name: "list_ad_groups",
+          arguments: { campaign_id },
+        });
+        expect(rejected.isError, campaign_id).toBe(true);
+      }
+      const rejectedArray = await client.callTool({
+        name: "delete_campaigns",
+        arguments: { campaign_ids: ["123", "x"] },
+      });
+      expect(rejectedArray.isError).toBe(true);
+      expect(mock.calls.filter((call) => call.url.includes("/v13/"))).toHaveLength(0);
+
+      const accepted = await client.callTool({
+        name: "list_ad_groups",
+        arguments: { campaign_id: "9007199254740993" },
+      });
+      expect(accepted.isError).toBeFalsy();
+    });
+    expect(mock.callsTo("AdGroups/QueryByCampaignId")[0]?.body).toEqual({
+      CampaignId: "9007199254740993",
+    });
+  });
+
+  test("leave opaque and foreign ids unconstrained", async () => {
+    await withClient(async (client) => {
+      const props = new Map(
+        (await client.listTools()).tools.map((tool) => [
+          tool.name,
+          tool.inputSchema.properties as Record<string, unknown>,
+        ]),
+      );
+      // Bulk records carry negative temporary ids ("-1"); request ids are opaque.
+      for (const [tool, arg] of [
+        ["bulk_upload", "records"],
+        ["get_bulk_upload", "request_id"],
+        ["get_bulk_download", "download_request_id"],
+        ["get_report", "report_request_id"],
+        ["create_google_import", "google_account_id"],
+        ["msads_raw_read", "account_id"],
+      ] as const) {
+        expect(JSON.stringify(props.get(tool)?.[arg]), `${tool}.${arg}`).not.toContain(
+          "pattern",
+        );
+      }
+      expect(JSON.stringify(props.get("list_ad_groups")?.campaign_id)).toContain(
+        "pattern",
+      );
+    });
+  });
+});
